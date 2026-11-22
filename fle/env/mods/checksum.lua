@@ -1,3 +1,5 @@
+FLE = FLE or {}
+
 if not storage.__lua_script_checksums then
     storage.__lua_script_checksums = {}
 end

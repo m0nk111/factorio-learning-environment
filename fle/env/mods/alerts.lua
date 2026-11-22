@@ -53,6 +53,10 @@ local INVENTORY = {
     crafter_output = defines.inventory.assembling_machine_output or defines.inventory.crafter_output,
     furnace_source = defines.inventory.furnace_source or defines.inventory.crafter_input,
     furnace_result = defines.inventory.furnace_result or defines.inventory.crafter_output,
+    rocket_silo_input = defines.inventory.rocket_silo_input or defines.inventory.crafter_input,
+    rocket_silo_output = defines.inventory.rocket_silo_output or defines.inventory.crafter_output,
+    rocket_silo_modules = defines.inventory.rocket_silo_modules or defines.inventory.crafter_modules,
+    rocket_silo_rocket = defines.inventory.rocket_silo_rocket,
 }
 
 local function is_full(entity)
@@ -110,13 +114,13 @@ local function is_full(entity)
                     inventory_name = "assembler output"
                 end
             elseif entity.type == "rocket-silo" then
-                if inventory_id == defines.inventory.rocket_silo_input then
+                if inventory_id == INVENTORY.rocket_silo_input then
                     inventory_name = "rocket silo input"
-                elseif inventory_id == defines.inventory.rocket_silo_output then
+                elseif inventory_id == INVENTORY.rocket_silo_output then
                     inventory_name = "rocket silo output"
-                elseif inventory_id == defines.inventory.rocket_silo_modules then
+                elseif inventory_id == INVENTORY.rocket_silo_modules then
                     inventory_name = "rocket silo modules"
-                elseif inventory_id == defines.inventory.rocket then
+                elseif inventory_id == INVENTORY.rocket_silo_rocket then
                     inventory_name = "rocket"
                 end
             elseif entity.type == "mining-drill" then
