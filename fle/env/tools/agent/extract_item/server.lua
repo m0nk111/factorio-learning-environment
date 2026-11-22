@@ -2,17 +2,36 @@ FLE = FLE or {}
 FLE.utils = FLE.utils or {}
 FLE.actions = FLE.actions or {}
 -- Factorio 2.1 removed several inventory defines (assembling_machine_*,
--- furnace_*, reactor_*, lab_source, mining_drill_input, storage_tank, ...). Build
--- the list densely: a sparse literal would make ipairs stop at the first nil and
--- silently skip every later inventory.
+-- furnace_*, reactor_*, lab_source, mining_drill_input, storage_tank, ...) in
+-- favour of the generic crafter_* family, while 2.0 only has the specific ones.
+-- Add every variant that exists and dedupe by id: that keeps the list dense for
+-- ipairs (a sparse literal stops at the first nil and silently skips the rest)
+-- on both engines, including the supported 2.0 image override.
 local function inventory_list()
     local d = defines.inventory
     local list = {}
-    local function add(id) if id then list[#list + 1] = id end end
+    local seen = {}
+    local function add(id)
+        if id ~= nil and not seen[id] then
+            seen[id] = true
+            list[#list + 1] = id
+        end
+    end
     add(d.chest)
     add(d.crafter_input)
+    add(d.furnace_source)
+    add(d.assembling_machine_input)
+    add(d.reactor_source)
+    add(d.mining_drill_input)
     add(d.crafter_output)
+    add(d.furnace_result)
+    add(d.assembling_machine_output)
+    add(d.reactor_result)
     add(d.crafter_modules)
+    add(d.furnace_modules)
+    add(d.assembling_machine_modules)
+    add(d.lab_output)
+    add(d.storage_tank)
     add(d.fuel)
     add(d.burnt_result)
     add(d.lab_input)
