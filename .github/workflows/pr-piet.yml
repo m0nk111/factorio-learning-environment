@@ -1,0 +1,39 @@
+name: PR-Piet
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+  issue_comment:
+    types: [created, edited]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+# One command review at a time per PR: comments WITHOUT a command (bot audits)
+# get a unique group so they never cancel a running review. A human /review
+# does not cancel the pull_request auto-review (event-split group).
+concurrency:
+  group: >-
+    pr-piet-${{ github.event.pull_request.number || github.event.issue.number }}-${{ github.event_name }}${{ github.event_name == 'issue_comment' && !startsWith(github.event.comment.body, '/') && format('-nc-{0}', github.event.comment.id) || '' }}
+  cancel-in-progress: true
+
+jobs:
+  pr-piet:
+    if: ${{ github.event.sender.type != 'Bot' }}
+    uses: m0nklabs/pr-piet/.github/workflows/reusable-pr-piet.yml@main
+    with:
+      pr_number: ${{ github.event.pull_request.number || github.event.issue.number }}
+      base_branch: ${{ github.event.pull_request.base.ref || '' }}
+      # Tier 2 (second opinion) stays off by default; request it with a
+      # separate /review2 comment when wanted.
+      enable_tier2: false
+      auto_describe: true
+      auto_improve: true
+      # 1 model call instead of 2 for review + suggestions (via the pr-agent
+      # fork; suggestions land inline as ```suggestion fences with Apply).
+      single_call_review: true
+      response_language: en-US
+    secrets:
+      GUARDIAN_API_KEY: ${{ secrets.GUARDIAN_API_KEY }}
