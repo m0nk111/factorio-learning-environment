@@ -12,6 +12,7 @@ import zipfile
 import importlib.resources as ir
 from platformdirs import user_state_dir
 
+
 def _env_int(name: str, default: int) -> int:
     raw = os.environ.get(name)
     if raw is None or raw == "":

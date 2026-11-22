@@ -568,12 +568,40 @@ function util.parse_energy(energy)
 end
 
 function util.product_amount(product)
-  -- Factorio 2.1 replaced the single `probability` field of a recipe product with
-  -- `shared_probability` / `independent_probability`. Reading the old field raised
-  -- "attempt to perform arithmetic on field 'probability' (a nil value)".
-  local probability = product.probability or product.independent_probability
-    or product.shared_probability or 1
-  local amount = product.amount or ((product.amount_min + product.amount_max) / 2)
+  -- Factorio 2.1 replaced the single scalar `probability` of a recipe product with
+  -- two rolls: `independent_probability` (a number in [0, 1]) and
+  -- `shared_probability` (SharedProbabilityDefinition, a {min, max} window that a
+  -- shared roll must fall inside). Reading the old field raised "attempt to perform
+  -- arithmetic on field 'probability' (a nil value)", and treating the window as a
+  -- scalar silently dropped one of the two factors.
+  local amount
+  if product.amount ~= nil then
+    amount = product.amount
+  else
+    amount = ((product.amount_min or 0) + (product.amount_max or 0)) / 2
+  end
+
+  local probability
+  if product.probability ~= nil then
+    -- Factorio 2.0 and older: one scalar probability for the product.
+    probability = product.probability
+  else
+    local independent = product.independent_probability
+    if independent == nil then independent = 1 end
+    local shared = 1
+    local window = product.shared_probability
+    if type(window) == "table" then
+      -- The window spans the accepted shared-roll values, so its width is the
+      -- probability that the roll lands inside it; both rolls are independent.
+      local lower = window.min or 0
+      local upper = window.max or 1
+      shared = math.max(0, math.min(1, upper) - math.max(0, lower))
+    elseif type(window) == "number" then
+      shared = window
+    end
+    probability = independent * shared
+  end
+
   return probability * amount
 end
 
