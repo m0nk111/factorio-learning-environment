@@ -7,7 +7,7 @@ def parse_error(response: str) -> str:
 
 def test_error_message_preserves_inventory_reason_and_contents() -> None:
     response = (
-        '[string "storage.actions.place_entity"]:148: '
+        '[string "FLE.actions.place_entity"]:148: '
         '"No solar_panel in inventory. Current inventory: '
         'wooden-chest=9, boiler=2"'
     )

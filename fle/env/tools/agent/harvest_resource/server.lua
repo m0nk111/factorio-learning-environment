@@ -1,4 +1,7 @@
---- storage.actions.harvest_resource(player_index, x, y, count, radius)
+FLE = FLE or {}
+FLE.utils = FLE.utils or {}
+FLE.actions = FLE.actions or {}
+--- FLE.actions.harvest_resource(player_index, x, y, count, radius)
 local function calculate_mining_ticks(entity)
     local mining_time = entity.prototype.mineable_properties.mining_time or 1
     -- Convert mining time (in seconds) to ticks (60 ticks per second)
@@ -157,10 +160,10 @@ script.on_nth_tick(15, function(event)
             if ticks_mining >= 30 then
                 -- Time to finish mining
                 -- Factorio 2.0: Use compat wrapper for get_contents()
-                local inv_before = storage.utils.get_contents_compat(player.get_main_inventory())
+                local inv_before = FLE.utils.get_contents_compat(player.get_main_inventory())
                 local mined_ok = player.mine_entity(entity)  -- Instantly mines & adds items
                 if mined_ok then
-                    local inv_after = storage.utils.get_contents_compat(player.get_main_inventory())
+                    local inv_after = FLE.utils.get_contents_compat(player.get_main_inventory())
 
                     -- Figure out how many items we actually gained
                     local items_added = 0
@@ -457,7 +460,7 @@ local function harvest_simple_entities(entities, count, from_position, player)
 end
 
 
-storage.actions.harvest_resource = function(player_index, x, y, count, radius)
+FLE.actions.harvest_resource = function(player_index, x, y, count, radius)
     local player = storage.agent_characters[player_index]
     if not player then
         error("Player not found")
@@ -530,7 +533,7 @@ storage.actions.harvest_resource = function(player_index, x, y, count, radius)
     end
 end
 --
---storage.actions.harvest_resource2 = function(player_index, x, y, count, radius)
+--FLE.actions.harvest_resource2 = function(player_index, x, y, count, radius)
 --    local player = storage.agent_characters[player_index]
 --    if not player then
 --        error("Player not found")
@@ -589,20 +592,20 @@ end
 --end
 
 
-storage.actions.clear_harvest_queue = function(player_index)
+FLE.actions.clear_harvest_queue = function(player_index)
     if storage.harvest_queues and storage.harvest_queues[player_index] then
         storage.harvest_queues[player_index] = nil
     end
 end
 
-storage.actions.get_harvest_queue_length = function(player_index)
+FLE.actions.get_harvest_queue_length = function(player_index)
     if storage.harvest_queues and storage.harvest_queues[player_index] then
         return #storage.harvest_queues[player_index].entities
     end
     return 0
 end
 
-storage.actions.get_resource_name_at_position = function(player_index, x, y)
+FLE.actions.get_resource_name_at_position = function(player_index, x, y)
     local player = storage.agent_characters[player_index]
     if not player then
         error("Player not found")

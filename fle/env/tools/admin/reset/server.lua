@@ -1,3 +1,5 @@
+FLE = FLE or {}
+FLE.actions = FLE.actions or {}
 local function safe_json_to_table(json)
 	if not json or json == '' then return {} end
 	local ok, result = pcall(function()
@@ -18,7 +20,7 @@ local function get_inventory_for_index(inventories, index)
 	return inv
 end
 
-storage.actions.reset = function(inventories_json, reset_position, all_technologies_researched, clear_entities)
+FLE.actions.reset = function(inventories_json, reset_position, all_technologies_researched, clear_entities)
 	-- Clear alerts, reset game state, and production stats
 	game.reset_game_state()
 	storage.alerts = {}
@@ -28,7 +30,7 @@ storage.actions.reset = function(inventories_json, reset_position, all_technolog
 	storage.paths = {}
 	storage.path_requests = {}
 	storage.clearance_entities = {}
-	storage.actions.reset_production_stats()
+	FLE.actions.reset_production_stats()
 	storage.elapsed_ticks = 0
 
 	local inventories = safe_json_to_table(inventories_json)
@@ -38,8 +40,8 @@ storage.actions.reset = function(inventories_json, reset_position, all_technolog
 		for i, character in pairs(storage.agent_characters) do
 			-- Only process valid characters
 			if character and character.valid then
-				storage.actions.regenerate_resources(i)
-				storage.actions.clear_walking_queue(i)
+				FLE.actions.regenerate_resources(i)
+				FLE.actions.clear_walking_queue(i)
 
 				if reset_position then
 					local y_offset = (tonumber(i) or 1) - 1
@@ -48,12 +50,12 @@ storage.actions.reset = function(inventories_json, reset_position, all_technolog
 
 				-- Clear entities around each agent and reset inventories
 				if clear_entities then
-					storage.actions.clear_entities(i)
+					FLE.actions.clear_entities(i)
 				end
 
 				local inv_table = get_inventory_for_index(inventories, i)
 				local inv_json = helpers.table_to_json(inv_table)
-				storage.actions.set_inventory(i, inv_json)
+				FLE.actions.set_inventory(i, inv_json)
 			end
 		end
 	end

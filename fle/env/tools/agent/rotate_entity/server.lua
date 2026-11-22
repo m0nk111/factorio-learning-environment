@@ -1,4 +1,7 @@
-storage.actions.rotate_entity = function(player_index, x, y, direction, entity)
+FLE = FLE or {}
+FLE.utils = FLE.utils or {}
+FLE.actions = FLE.actions or {}
+FLE.actions.rotate_entity = function(player_index, x, y, direction, entity)
     local character = storage.agent_characters[player_index]
     local lua_player = game.players[player_index]  -- Get the actual LuaPlayer object
     local position = {x=x, y=y}
@@ -40,7 +43,7 @@ storage.actions.rotate_entity = function(player_index, x, y, direction, entity)
         error("Invalid direction " .. direction .. " provided. Please use 0 (north), 4 (east), 8 (south), or 12 (west).")
     end
 
-    local target_direction = storage.utils.get_entity_direction(closest_entity.name, direction)
+    local target_direction = FLE.utils.get_entity_direction(closest_entity.name, direction)
 
     -- For assembling machines in Factorio 2.0, rotation is complex due to fluid_boxes_off_when_no_fluid_recipe
     -- Without the fle-compat mod, assemblers without a fluid recipe cannot be rotated via .rotate(),
@@ -174,6 +177,6 @@ storage.actions.rotate_entity = function(player_index, x, y, direction, entity)
         closest_entity.teleport(aligned_position)
     end
 
-    local serialized = storage.utils.serialize_entity(closest_entity)
+    local serialized = FLE.utils.serialize_entity(closest_entity)
     return serialized
 end

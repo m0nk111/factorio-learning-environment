@@ -1,3 +1,5 @@
+FLE = FLE or {}
+FLE.utils = FLE.utils or {}
 -- Library for serializing items in Factorio
 -- Based on code from playerManager and trainTeleports
 -- Updated for Factorio 2.0
@@ -552,7 +554,7 @@ local function is_valid_connection_point(surface, position)
     return not invalid_tiles[tile.name]
 end
 
-storage.utils.entity_status_names = function(entity_status)
+FLE.utils.entity_status_names = function(entity_status)
     local s = entity_status
     if not s then return '"normal"' end
 
@@ -568,9 +570,9 @@ storage.utils.entity_status_names = function(entity_status)
     return '"normal"'
 end
 
-storage.utils.get_entity_direction = get_entity_direction
+FLE.utils.get_entity_direction = get_entity_direction
 
-storage.utils.serialize_recipe = function(recipe)
+FLE.utils.serialize_recipe = function(recipe)
     local function serialize_number(num)
         if num == math.huge then
             return "inf"
@@ -611,7 +613,7 @@ storage.utils.serialize_recipe = function(recipe)
     }
 end
 
-storage.utils.serialize_entity = function(entity)
+FLE.utils.serialize_entity = function(entity)
 
     if entity == nil then
         return {}
@@ -649,14 +651,14 @@ storage.utils.serialize_entity = function(entity)
         health = entity.health,
         energy = entity.energy,
         type = "\""..entity.type.."\"",
-        status = storage.utils.entity_status_names(entity.status)
+        status = FLE.utils.entity_status_names(entity.status)
     }
 
     if entity.grid then
         serialized.grid = serialize_equipment_grid(entity.grid)
     end
     --game.print(serpent.line(entity.get_inventory(defines.inventory.turret_ammo)))
-    serialized.warnings = storage.utils.get_issues(entity)
+    serialized.warnings = FLE.utils.get_issues(entity)
 
     local inventory_types = {
         {name = "fuel", define = defines.inventory.fuel},
@@ -676,7 +678,7 @@ storage.utils.serialize_entity = function(entity)
     for _, inv_type in ipairs(inventory_types) do
         local inventory = entity.get_inventory(inv_type.define)
         if inventory then
-            serialized[inv_type.name] = storage.utils.get_contents_compat(inventory)
+            serialized[inv_type.name] = FLE.utils.get_contents_compat(inventory)
         end
     end
 
@@ -766,8 +768,8 @@ storage.utils.serialize_entity = function(entity)
 
         -- Get and merge contents from both lines
         serialized.inventory = {}
-        local line1_contents = storage.utils.get_contents_compat(line1)
-        local line2_contents = storage.utils.get_contents_compat(line2)
+        local line1_contents = FLE.utils.get_contents_compat(line1)
+        local line2_contents = FLE.utils.get_contents_compat(line2)
 
         -- Set terminus and source flags based on connections
         serialized.is_terminus = #entity.belt_neighbours["outputs"] == 0
@@ -878,8 +880,8 @@ storage.utils.serialize_entity = function(entity)
 
         -- Get the contents of both output lines
         serialized.inventory = {
-            storage.utils.get_contents_compat(entity.get_transport_line(1)),
-            storage.utils.get_contents_compat(entity.get_transport_line(2))
+            FLE.utils.get_contents_compat(entity.get_transport_line(1)),
+            FLE.utils.get_contents_compat(entity.get_transport_line(2))
         }
     end
 
@@ -993,7 +995,7 @@ storage.utils.serialize_entity = function(entity)
         serialized.output_connection_points = {}
 
         local recipe = entity.get_recipe()
-        local mappings = storage.utils.get_refinery_fluid_mappings(entity, recipe)
+        local mappings = FLE.utils.get_refinery_fluid_mappings(entity, recipe)
         if mappings then
             serialized.input_connection_points = mappings.inputs
             serialized.output_connection_points = mappings.outputs
@@ -1006,7 +1008,7 @@ storage.utils.serialize_entity = function(entity)
         serialized.output_connection_points = {}
 
         local recipe = entity.get_recipe()
-        local mappings = storage.utils.get_chemical_plant_fluid_mappings(entity, recipe)
+        local mappings = FLE.utils.get_chemical_plant_fluid_mappings(entity, recipe)
         if mappings then
             serialized.input_connection_points = mappings.inputs
             serialized.output_connection_points = mappings.outputs
@@ -1035,7 +1037,7 @@ storage.utils.serialize_entity = function(entity)
 
     if entity.type == "storage-tank" then
         -- Get and filter connection points
-        local connection_points = storage.utils.get_storage_tank_connection_points(entity)
+        local connection_points = FLE.utils.get_storage_tank_connection_points(entity)
         local filtered_points = {}
 
         -- Filter out invalid connection points (e.g., those in water)
@@ -1182,7 +1184,7 @@ storage.utils.serialize_entity = function(entity)
     -- Add recipes if the entity is a crafting machine
     if entity.type == "assembling-machine" or entity.type == "furnace" then
         if entity.get_recipe() then
-            serialized.recipe = storage.utils.serialize_recipe(entity.get_recipe())
+            serialized.recipe = FLE.utils.serialize_recipe(entity.get_recipe())
         end
     end
 
@@ -1235,7 +1237,7 @@ storage.utils.serialize_entity = function(entity)
         -- Serialize the component inventories
         for name, inventory in pairs(rocket_inventory) do
             if inventory and not inventory.is_empty() then
-                serialized[name .. "_inventory"] = storage.utils.get_contents_compat(inventory)
+                serialized[name .. "_inventory"] = FLE.utils.get_contents_compat(inventory)
             end
         end
 
@@ -1274,13 +1276,13 @@ storage.utils.serialize_entity = function(entity)
     end
 
     if entity.type == "generator" then
-        serialized.connection_points = storage.utils.get_generator_connection_positions(entity)
+        serialized.connection_points = FLE.utils.get_generator_connection_positions(entity)
         serialized.energy_generated_last_tick = entity.energy_generated_last_tick
         --serialized.power_production = entity.power_production
     end
 
     if entity.name == "pumpjack" then
-        serialized.connection_points = storage.utils.get_pumpjack_connection_points(entity)
+        serialized.connection_points = FLE.utils.get_pumpjack_connection_points(entity)
     end
 
     -- Add fuel and input ingredients if the entity is a furnace or burner
@@ -1303,7 +1305,7 @@ storage.utils.serialize_entity = function(entity)
 
     -- Add fluid box if the entity is an offshore pump
     if entity.type == "offshore-pump" then
-        serialized.connection_points = storage.utils.get_offshore_pump_connection_points(entity)
+        serialized.connection_points = FLE.utils.get_offshore_pump_connection_points(entity)
     end
 
     -- If entity has a fluidbox

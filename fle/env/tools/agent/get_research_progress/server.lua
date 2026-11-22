@@ -1,4 +1,6 @@
-storage.actions.get_research_progress = function(player_index, technology_name)
+FLE = FLE or {}
+FLE.actions = FLE.actions or {}
+FLE.actions.get_research_progress = function(player_index, technology_name)
     local player = storage.agent_characters[player_index]
     local force = player.force
 

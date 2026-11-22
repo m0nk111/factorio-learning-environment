@@ -1,4 +1,6 @@
-storage.actions.sleep = function(seconds)
+FLE = FLE or {}
+FLE.actions = FLE.actions or {}
+FLE.actions.sleep = function(seconds)
     -- Always add ticks as if running at standard 60 ticks/second
     local standard_ticks = seconds * 60
     

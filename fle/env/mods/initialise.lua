@@ -1,16 +1,8 @@
+FLE = FLE or {}
+FLE.utils = FLE.utils or {}
 --- initialise.lua
 --- This file is used to initialise the global variables and functions.
 --- Ensure this is loaded first. Any variables or functions defined here will be available to all other scripts.
-
-if not storage.actions then
-    --- @type table Actions table
-    storage.actions = {}
-end
-
-if not storage.utils then
-    --- @type table Utils table
-    storage.utils = {}
-end
 
 if not storage.initial_score then
     --- @type table Initial score table
@@ -71,7 +63,7 @@ end
 
 -- Factorio 2.0 compatibility: get_contents() now returns array of {name, count, quality}
 -- This wrapper converts to the old format {item_name = count, ...}
-storage.utils.get_contents_compat = function(inventory)
+FLE.utils.get_contents_compat = function(inventory)
     if not inventory then return {} end
     local contents = {}
     for _, item in pairs(inventory.get_contents()) do

@@ -1,4 +1,6 @@
-storage.actions.save_blueprint = function(player_index)
+FLE = FLE or {}
+FLE.actions = FLE.actions or {}
+FLE.actions.save_blueprint = function(player_index)
     local player = storage.agent_characters[player_index]
     local force = player.force
     if not force then

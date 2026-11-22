@@ -1,3 +1,6 @@
+FLE = FLE or {}
+FLE.utils = FLE.utils or {}
+FLE.actions = FLE.actions or {}
 -- Helper function to check all possible inventories of an entity
 local function get_entity_item_count(entity, item_name)
     local inventory_types = {
@@ -96,9 +99,9 @@ local function remove_items_from_entity(entity, stack)
     return total_removed
 end
 
-storage.actions.extract_item = function(player_index, extract_item, count, x, y, source_name)
+FLE.actions.extract_item = function(player_index, extract_item, count, x, y, source_name)
     -- Ensure we have a valid character, recreating if necessary
-    local player = storage.utils.ensure_valid_character(player_index)
+    local player = FLE.utils.ensure_valid_character(player_index)
     local position = {x=x, y=y}
     local surface = player.surface
 

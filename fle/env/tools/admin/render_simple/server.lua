@@ -1,4 +1,6 @@
-storage.actions.render_simple = function(player_index, method, arg1, arg2, arg3, arg4)
+FLE = FLE or {}
+FLE.actions = FLE.actions or {}
+FLE.actions.render_simple = function(player_index, method, arg1, arg2, arg3, arg4)
     local player = storage.agent_characters[player_index]
     local position, bounding_box, radius
 

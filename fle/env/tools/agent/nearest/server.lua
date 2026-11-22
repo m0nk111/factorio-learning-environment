@@ -1,6 +1,9 @@
-storage.actions.nearest = function(player_index, resource)
+FLE = FLE or {}
+FLE.utils = FLE.utils or {}
+FLE.actions = FLE.actions or {}
+FLE.actions.nearest = function(player_index, resource)
     -- Ensure we have a valid character, recreating if necessary
-    local player = storage.utils.ensure_valid_character(player_index)
+    local player = FLE.utils.ensure_valid_character(player_index)
 
     local function normalize_resource_name(resource)
         if resource == "copper" then

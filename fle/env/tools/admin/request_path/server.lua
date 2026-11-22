@@ -1,11 +1,14 @@
+FLE = FLE or {}
+FLE.utils = FLE.utils or {}
+FLE.actions = FLE.actions or {}
 -- Store created entities globally
 if not storage.clearance_entities then
     storage.clearance_entities = {}
 end
 
-storage.actions.request_path = function(player_index, start_x, start_y, goal_x, goal_y, radius, allow_paths_through_own_entities, entity_size)
+FLE.actions.request_path = function(player_index, start_x, start_y, goal_x, goal_y, radius, allow_paths_through_own_entities, entity_size)
     -- Ensure we have a valid character, recreating if necessary
-    local player = storage.utils.ensure_valid_character(player_index)
+    local player = FLE.utils.ensure_valid_character(player_index)
     if not player then return nil end
     local size = entity_size/2 - 0.01
 
@@ -49,7 +52,7 @@ storage.actions.request_path = function(player_index, start_x, start_y, goal_x, 
 
     -- Add temporary collision entities
     local clearance_entities = {}
-    storage.utils.avoid_entity(player_index, "iron-chest", {y = goal_y, x = goal_x})
+    FLE.utils.avoid_entity(player_index, "iron-chest", {y = goal_y, x = goal_x})
     
     local goal_position = player.surface.find_non_colliding_position(
         "iron-chest",

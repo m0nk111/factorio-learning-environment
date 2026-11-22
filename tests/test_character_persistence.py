@@ -986,7 +986,7 @@ class TestCharacterDamageAndDeath:
 
         # Try to use ensure_valid_character to recover
         instance.rcon_client.send_command(
-            "/silent-command storage.utils.ensure_valid_character(1)"
+            "/silent-command FLE.utils.ensure_valid_character(1)"
         )
 
         # Check if recovered
@@ -1011,7 +1011,7 @@ class TestCharacterDamageAndDeath:
 
         # Attempt recovery
         instance.rcon_client.send_command(
-            "/silent-command storage.utils.ensure_valid_character(1)"
+            "/silent-command FLE.utils.ensure_valid_character(1)"
         )
 
         result = instance.rcon_client.send_command(
@@ -1078,7 +1078,7 @@ class TestCharacterInvalidation:
 
         # Recovery should create new character
         instance.rcon_client.send_command(
-            "/silent-command storage.utils.ensure_valid_character(1)"
+            "/silent-command FLE.utils.ensure_valid_character(1)"
         )
 
         result = instance.rcon_client.send_command(

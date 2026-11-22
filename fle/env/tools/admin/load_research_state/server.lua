@@ -1,5 +1,7 @@
+FLE = FLE or {}
+FLE.actions = FLE.actions or {}
 -- Load research state
-storage.actions.load_research_state = function(player_index, research_state)
+FLE.actions.load_research_state = function(player_index, research_state)
     local player = storage.agent_characters[player_index]
     local force = player.force
 

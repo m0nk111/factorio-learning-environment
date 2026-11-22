@@ -1,3 +1,5 @@
+FLE = FLE or {}
+FLE.actions = FLE.actions or {}
 -- Helper function to calculate factory bounds
 function calculate_factory_bounds(force)
     local min_x = math.huge
@@ -52,7 +54,7 @@ function calculate_factory_bounds(force)
 end
 
 
-storage.actions.get_factory_centroid = function(player)
+FLE.actions.get_factory_centroid = function(player)
     -- Default to player force if none specified
     local force = "player"
 

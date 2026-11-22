@@ -1,4 +1,6 @@
-storage.actions.regenerate_resources = function(player_index)
+FLE = FLE or {}
+FLE.actions = FLE.actions or {}
+FLE.actions.regenerate_resources = function(player_index)
     local player = storage.agent_characters[player_index]
     local surface = player.surface
     for _, ore in pairs(surface.find_entities_filtered({type="resource"})) do
@@ -12,7 +14,7 @@ storage.actions.regenerate_resources = function(player_index)
     player.force.reset()
 end
 
-storage.actions.regenerate_resources2 = function(player_index)
+FLE.actions.regenerate_resources2 = function(player_index)
     local player = storage.agent_characters[player_index]
 
     local surface = player.surface

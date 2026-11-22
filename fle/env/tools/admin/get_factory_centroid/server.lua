@@ -1,3 +1,5 @@
+FLE = FLE or {}
+FLE.actions = FLE.actions or {}
 -- Initialize global camera tracking variables in your script's initialization
 -- Put this in your script's on_init or when you initialize your global table
 function initialize_camera_tracking(initial_position)
@@ -73,7 +75,7 @@ function calculate_factory_bounds(force)
 end
 
 -- Updated function to get factory centroid and update camera smoothly
-storage.actions.get_factory_centroid = function(player)
+FLE.actions.get_factory_centroid = function(player)
     -- Default to player force if none specified
     local force = "player"
 

@@ -1,10 +1,12 @@
+FLE = FLE or {}
+FLE.actions = FLE.actions or {}
 -- Cache math functions
 local floor = math.floor
 local ceil = math.ceil
 local max = math.max
 local abs = math.abs
 
-storage.actions.nearest_buildable = function(player_index, entity_name, bounding_box, center_position)
+FLE.actions.nearest_buildable = function(player_index, entity_name, bounding_box, center_position)
     local player = storage.agent_characters[player_index]
     local surface = player.surface
     local entity_prototype = prototypes.entity[entity_name]

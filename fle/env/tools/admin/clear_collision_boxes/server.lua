@@ -1,4 +1,6 @@
-storage.actions.clear_collision_boxes = function(player_index)
+FLE = FLE or {}
+FLE.actions = FLE.actions or {}
+FLE.actions.clear_collision_boxes = function(player_index)
     local player = storage.agent_characters[player_index]
     if not player then return end
 
