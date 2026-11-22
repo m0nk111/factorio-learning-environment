@@ -1,0 +1,51 @@
+name: PR-Piet
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+  issue_comment:
+    types: [created, edited]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+# Eén commando-review tegelijk per PR én event-type: een nieuwe
+# /commando-run cancelt de lopende van hetzelfde event-type (versere
+# analyse wint). Twee extra beschermingen:
+# 1. De groep is gesplitst op event-name: een menselijke `/review`-comment
+#    cancelt de pull_request-auto-review niet (gecancelde run = gefaalde
+#    required check = merge-state UNSTABLE, gezien op guardian PR #12).
+# 2. Comments ZONDER commando (bot-audits zoals ecc-tools, status-updates)
+#    krijgen een unieke groep zodat ze de lopende review NIET cancellen
+#    tijdens de concurrency-claim — de cmdguard skipt ze toch (gezien op
+#    guardian PR #22: 4 bot-audit-comments vermoordden 2 lopende reviews).
+concurrency:
+  group: >-
+    pr-piet-${{ github.event.pull_request.number || github.event.issue.number }}-${{ github.event_name }}${{ github.event_name == 'issue_comment' && !startsWith(github.event.comment.body, '/') && format('-nc-{0}', github.event.comment.id) || '' }}
+  cancel-in-progress: true
+
+jobs:
+  pr-piet:
+    if: ${{ github.event.sender.type != 'Bot' }}
+    uses: m0nklabs/pr-piet/.github/workflows/reusable-pr-piet.yml@main
+    with:
+      # Werkt voor pull_request én issue_comment events.
+      pr_number: ${{ github.event.pull_request.number || github.event.issue.number }}
+      base_branch: ${{ github.event.pull_request.base.ref || '' }}
+      # Tier-2 (second opinion) draait NIET automatisch — default false.
+      # Handmatig triggeren kan altijd met een losse `/review2`-comment op de
+      # PR: die draait tier 2 (model_tier2) ongeacht deze vlag.
+      enable_tier2: false
+      auto_describe: true
+      auto_improve: true
+      # EXPERIMENTEEL — 1 modelcall i.p.v. 2 voor review + suggesties
+      # (via de pr-agent fork; suggesties worden inline ```suggestion-fences
+      # mét Apply-knop op de formele review). Terugdraaien: regel weghalen
+      # of op false zetten = oude 2-call gedrag. Default is false.
+      # single_call_review: true
+      response_language: en-US
+      # gateway_base_url: http://172.17.0.1:11434/v1  (default; container -> host-bridge -> nginx)
+    secrets:
+      GUARDIAN_API_KEY: ${{ secrets.GUARDIAN_API_KEY }}
