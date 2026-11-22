@@ -60,18 +60,22 @@ local function get_product_list()
   for k, entity in pairs (entities) do
     if entity.type == "rocket-silo" and entity.fixed_recipe then
       local recipe = recipes[entity.fixed_recipe]
-      if not recipe then return end
-      local required_parts = entity.rocket_parts_required
-      local list = {}
-      for k, product in pairs (recipe.products) do
-        local product_amount = util.product_amount(product)
-        if product_amount > 0 then
-          product_amount = product_amount * required_parts
-          list[product.name] = product_amount
+      -- Factorio 2.1: a rocket silo's fixed_recipe may no longer resolve to a
+      -- recipe prototype. Skip that silo and keep the price list; the previous
+      -- bare `return` made get_product_list() return nil and broke scoring.
+      if recipe then
+        local required_parts = entity.rocket_parts_required
+        local list = {}
+        for k, product in pairs (recipe.products) do
+          local product_amount = util.product_amount(product)
+          if product_amount > 0 then
+            product_amount = product_amount * required_parts
+            list[product.name] = product_amount
+          end
         end
+        list["energy"] = recipe.energy
+        table.insert(rocket_silos, list)
       end
-      list["energy"] = recipe.energy
-      table.insert(rocket_silos, list)
     end
   end
   for k, item in pairs (items) do

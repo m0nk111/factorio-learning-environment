@@ -44,21 +44,38 @@ local function is_transport_belt_blocked(entity)
 end
 
 -- Define a function to check if an entity is full
+-- Factorio 2.1 renamed the crafter/furnace inventory defines; resolve once so
+-- every use site below works on 2.0 and 2.1 alike.
+local INVENTORY = {
+    crafter_input = defines.inventory.assembling_machine_input or defines.inventory.crafter_input,
+    crafter_output = defines.inventory.assembling_machine_output or defines.inventory.crafter_output,
+    furnace_source = defines.inventory.furnace_source or defines.inventory.crafter_input,
+    furnace_result = defines.inventory.furnace_result or defines.inventory.crafter_output,
+}
+
 local function is_full(entity)
-    -- Map inventory types to string names
-    local inventory_names = {
-        [defines.inventory.rocket_silo_rocket] = "rocket",
-        [defines.inventory.rocket_silo_input] = "rocket input",
-        [defines.inventory.rocket_silo_output] = "rocket output",
-        [defines.inventory.rocket_silo_modules] = "rocket modules",
-        [defines.inventory.fuel] = "fuel source",
-        [defines.inventory.burnt_result] = "burnt result",
-        [defines.inventory.assembling_machine_input] = "assembling machine input",
-        [defines.inventory.assembling_machine_output] = "assembling machine output",
-        [defines.inventory.chest] = "chest",
-        [defines.inventory.furnace_source] = "furnace source",
-        [defines.inventory.furnace_result] = "furnace result",
-    }
+    -- Map inventory types to string names. Factorio 2.1 renamed several
+    -- defines.inventory members (assembling_machine_* / furnace_* /
+    -- rocket_silo_input|output|modules) to the generic crafter_* family; using a
+    -- nil enum member as a table key raised "table index is nil" on 2.1.
+    local inventory_names = {}
+    local function label(define_id, text)
+        if define_id ~= nil and inventory_names[define_id] == nil then
+            inventory_names[define_id] = text
+        end
+    end
+    label(defines.inventory.rocket_silo_rocket, "rocket")
+    label(defines.inventory.rocket_silo_input or defines.inventory.crafter_input, "rocket input")
+    label(defines.inventory.rocket_silo_output or defines.inventory.crafter_output, "rocket output")
+    label(defines.inventory.rocket_silo_modules or defines.inventory.crafter_modules, "rocket modules")
+    label(defines.inventory.fuel, "fuel source")
+    label(defines.inventory.burnt_result, "burnt result")
+    label(defines.inventory.assembling_machine_input or defines.inventory.crafter_input, "assembling machine input")
+    label(defines.inventory.assembling_machine_output or defines.inventory.crafter_output, "assembling machine output")
+    label(defines.inventory.chest, "chest")
+    label(defines.inventory.furnace_source or defines.inventory.crafter_input, "furnace source")
+    label(defines.inventory.furnace_result or defines.inventory.crafter_output, "furnace result")
+    label(defines.inventory.crafter_trash, "crafter trash")
 
     local full_inventories = {}
 
@@ -79,15 +96,15 @@ local function is_full(entity)
             if entity.type == "furnace" then
                 if inventory_id == defines.inventory.fuel then
                     inventory_name = "furnace fuel source"
-                elseif inventory_id == defines.inventory.furnace_source then
+                elseif inventory_id == INVENTORY.furnace_source then
                     inventory_name = "furnace source"
-                elseif inventory_id == defines.inventory.furnace_result then
+                elseif inventory_id == INVENTORY.furnace_result then
                     inventory_name = "furnace result"
                 end
             elseif entity.type == "assembling-machine" then
-                if inventory_id == defines.inventory.assembling_machine_input then
+                if inventory_id == INVENTORY.crafter_input then
                     inventory_name = "assembler input"
-                elseif inventory_id == defines.inventory.assembling_machine_output then
+                elseif inventory_id == INVENTORY.crafter_output then
                     inventory_name = "assembler output"
                 end
             elseif entity.type == "rocket-silo" then
@@ -214,16 +231,26 @@ local function has_electricity(entity)
 end
 
 -- Define a function to check if the entity (boiler) has necessary input liquid
+-- Factorio 2.1 raises "LuaEntity doesn't contain key fluidbox" for entities
+-- without fluidboxes instead of returning nil, so probe defensively.
+local function first_fluid_box(entity)
+    local ok, fluidbox = pcall(function() return entity.fluidbox end)
+    if not ok or fluidbox == nil then return nil end
+    local ok_slot, box = pcall(function() return fluidbox[1] end)
+    if not ok_slot then return nil end
+    return box
+end
+
 local function has_input_liquid(entity)
     if entity.type == "boiler" then
-        local fluid_box = entity.fluidbox[1]
+        local fluid_box = first_fluid_box(entity)
         if fluid_box == nil or fluid_box.amount <= 0 then
             return false
         end
     end
     -- If the entity is a steam engine, check if it has water
     if entity.type == "generator" then
-        local fluid_box = entity.fluidbox[1]
+        local fluid_box = first_fluid_box(entity)
         if fluid_box == nil or fluid_box.amount <= 0 then
             return false
         end
@@ -339,7 +366,7 @@ function lacks_assembler_resources(entity)
         local recipe = entity.get_recipe()
         if recipe then
             local ingredients = recipe.ingredients
-            local input_inventory = entity.get_inventory(defines.inventory.assembling_machine_input)
+            local input_inventory = entity.get_inventory(INVENTORY.crafter_input)
             local missing_resources = {}
 
             for _, ingredient in pairs(ingredients) do

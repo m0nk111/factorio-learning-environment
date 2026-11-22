@@ -568,7 +568,13 @@ function util.parse_energy(energy)
 end
 
 function util.product_amount(product)
-  return product.probability * (product.amount or ((product.amount_min + product.amount_max) / 2))
+  -- Factorio 2.1 replaced the single `probability` field of a recipe product with
+  -- `shared_probability` / `independent_probability`. Reading the old field raised
+  -- "attempt to perform arithmetic on field 'probability' (a nil value)".
+  local probability = product.probability or product.independent_probability
+    or product.shared_probability or 1
+  local amount = product.amount or ((product.amount_min + product.amount_max) / 2)
+  return probability * amount
 end
 
 function util.empty_sprite(animation_length)
