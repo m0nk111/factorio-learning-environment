@@ -1,3 +1,5 @@
+FLE = FLE or {}
+FLE.actions = FLE.actions or {}
 
 -- Function to convert HSV to RGB
 local function hsv_to_rgb(h, s, v)
@@ -30,7 +32,7 @@ local function generate_agent_color(index, total_agents)
 end
 
 -- Create agent characters script
-storage.actions.create_agent_characters = function(num_agents)
+FLE.actions.create_agent_characters = function(num_agents)
     -- delete all character entities on the surface
     for _, entity in pairs(game.surfaces[1].find_entities_filtered{type = "character"}) do
         entity.destroy()

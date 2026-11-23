@@ -1,5 +1,8 @@
+FLE = FLE or {}
+FLE.utils = FLE.utils or {}
+FLE.actions = FLE.actions or {}
 
-storage.actions.inspect_entities = function(player_index, radius, position_x, position_y)
+FLE.actions.inspect_entities = function(player_index, radius, position_x, position_y)
     local player = storage.agent_characters[player_index]
     local position
 
@@ -69,7 +72,7 @@ storage.actions.inspect_entities = function(player_index, radius, position_x, po
         return path_ends
     end
 
-    local entity_data = storage.utils.inspect(player, radius, position)
+    local entity_data = FLE.utils.inspect(player, radius, position)
 
     local result = {}
 
@@ -91,11 +94,11 @@ storage.actions.inspect_entities = function(player_index, radius, position_x, po
 
         local position = {x=data.position.x, y=data.position.y}
 
-        --game.print(data.name .. ": " .. data.direction .. " - ".. storage.utils.get_entity_direction(data.name:gsub("_", "-"), data.direction))
+        --game.print(data.name .. ": " .. data.direction .. " - ".. FLE.utils.get_entity_direction(data.name:gsub("_", "-"), data.direction))
         local entity_info = {
             name = data.name:gsub("-", "_"),
             position = position,
-            direction = storage.utils.get_entity_direction(data.name:gsub("_", "-"), data.direction),
+            direction = FLE.utils.get_entity_direction(data.name:gsub("_", "-"), data.direction),
             health = data.health,
             force = data.force,
             energy = data.energy,
@@ -113,7 +116,7 @@ storage.actions.inspect_entities = function(player_index, radius, position_x, po
             entity_info.crafted_items = data.crafted_items
         end
 
-        --local serialized = storage.utils.serialize_entity(data)
+        --local serialized = FLE.utils.serialize_entity(data)
         --table.insert(result, serialized)
 
         table.insert(result, entity_info)

@@ -1,3 +1,5 @@
+FLE = FLE or {}
+FLE.utils = FLE.utils or {}
 -- Library for serializing items in Factorio
 -- Based on code from playerManager and trainTeleports
 -- Updated for Factorio 2.0
@@ -218,6 +220,42 @@ recursive_serialize.deserialize_equipment_grid = function(grid, serialized)
             end
         end
     end
+end
+
+-- Factorio 2.1 replaced the assembling_machine_* / furnace_* / rocket_silo_* inventory
+-- defines with the generic crafter_* family. Resolve every id once here; a nil value
+-- means this engine no longer has it, and get_inventory must never receive it.
+local INVENTORY = {
+    chest = defines.inventory.chest,
+    fuel = defines.inventory.fuel,
+    burnt_result = defines.inventory.burnt_result,
+    furnace_source = defines.inventory.furnace_source or defines.inventory.crafter_input,
+    furnace_result = defines.inventory.furnace_result or defines.inventory.crafter_output,
+    furnace_modules = defines.inventory.furnace_modules or defines.inventory.crafter_modules,
+    assembling_machine_input = defines.inventory.assembling_machine_input or defines.inventory.crafter_input,
+    assembling_machine_output = defines.inventory.assembling_machine_output or defines.inventory.crafter_output,
+    assembling_machine_modules = defines.inventory.assembling_machine_modules or defines.inventory.crafter_modules,
+    lab_input = defines.inventory.lab_input,
+    lab_modules = defines.inventory.lab_modules,
+    turret_ammo = defines.inventory.turret_ammo,
+    rocket_silo_input = defines.inventory.rocket_silo_input or defines.inventory.crafter_input,
+    rocket_silo_output = defines.inventory.rocket_silo_output or defines.inventory.crafter_output,
+}
+
+-- Factorio 2.1 raises on `entity.fluidbox` for an entity without a fluidbox,
+-- where 2.0 returned nil. Probe the property instead of testing it directly, and
+-- read the size the same way; every fluidbox access in this file goes through it.
+local function fluidbox_of(entity)
+    local ok, fluidbox = pcall(function() return entity.fluidbox end)
+    if not ok then return nil end
+    return fluidbox
+end
+
+local function fluidbox_size(fluidbox)
+    if not fluidbox then return 0 end
+    local ok, size = pcall(function() return #fluidbox end)
+    if not ok then return 0 end
+    return size
 end
 
 local function serialize_fluidbox(fluidbox)
@@ -552,7 +590,7 @@ local function is_valid_connection_point(surface, position)
     return not invalid_tiles[tile.name]
 end
 
-storage.utils.entity_status_names = function(entity_status)
+FLE.utils.entity_status_names = function(entity_status)
     local s = entity_status
     if not s then return '"normal"' end
 
@@ -568,9 +606,9 @@ storage.utils.entity_status_names = function(entity_status)
     return '"normal"'
 end
 
-storage.utils.get_entity_direction = get_entity_direction
+FLE.utils.get_entity_direction = get_entity_direction
 
-storage.utils.serialize_recipe = function(recipe)
+FLE.utils.serialize_recipe = function(recipe)
     local function serialize_number(num)
         if num == math.huge then
             return "inf"
@@ -611,7 +649,7 @@ storage.utils.serialize_recipe = function(recipe)
     }
 end
 
-storage.utils.serialize_entity = function(entity)
+FLE.utils.serialize_entity = function(entity)
 
     if entity == nil then
         return {}
@@ -649,34 +687,36 @@ storage.utils.serialize_entity = function(entity)
         health = entity.health,
         energy = entity.energy,
         type = "\""..entity.type.."\"",
-        status = storage.utils.entity_status_names(entity.status)
+        status = FLE.utils.entity_status_names(entity.status)
     }
 
     if entity.grid then
         serialized.grid = serialize_equipment_grid(entity.grid)
     end
     --game.print(serpent.line(entity.get_inventory(defines.inventory.turret_ammo)))
-    serialized.warnings = storage.utils.get_issues(entity)
+    serialized.warnings = FLE.utils.get_issues(entity)
 
     local inventory_types = {
-        {name = "fuel", define = defines.inventory.fuel},
-        {name = "burnt_result", define = defines.inventory.burnt_result},
-        {name = "inventory", define = defines.inventory.chest},
-        {name = "furnace_source", define = defines.inventory.furnace_source},
-        {name = "furnace_result", define = defines.inventory.furnace_result},
-        {name = "furnace_modules", define = defines.inventory.furnace_modules},
-        {name = "assembling_machine_input", define = defines.inventory.assembling_machine_input},
-        {name = "assembling_machine_output", define = defines.inventory.assembling_machine_output},
-        {name = "assembling_machine_modules", define = defines.inventory.assembling_machine_modules},
-        {name = "lab_input", define = defines.inventory.lab_input},
-        {name = "lab_modules", define = defines.inventory.lab_modules},
-        {name = "turret_ammo", define = defines.inventory.turret_ammo}
+        {name = "fuel", define = INVENTORY.fuel},
+        {name = "burnt_result", define = INVENTORY.burnt_result},
+        {name = "inventory", define = INVENTORY.chest},
+        {name = "furnace_source", define = INVENTORY.furnace_source},
+        {name = "furnace_result", define = INVENTORY.furnace_result},
+        {name = "furnace_modules", define = INVENTORY.furnace_modules},
+        {name = "assembling_machine_input", define = INVENTORY.assembling_machine_input},
+        {name = "assembling_machine_output", define = INVENTORY.assembling_machine_output},
+        {name = "assembling_machine_modules", define = INVENTORY.assembling_machine_modules},
+        {name = "lab_input", define = INVENTORY.lab_input},
+        {name = "lab_modules", define = INVENTORY.lab_modules},
+        {name = "turret_ammo", define = INVENTORY.turret_ammo}
     }
 
     for _, inv_type in ipairs(inventory_types) do
-        local inventory = entity.get_inventory(inv_type.define)
-        if inventory then
-            serialized[inv_type.name] = storage.utils.get_contents_compat(inventory)
+        if inv_type.define then
+            local ok, inventory = pcall(entity.get_inventory, inv_type.define)
+            if ok and inventory then
+                serialized[inv_type.name] = FLE.utils.get_contents_compat(inventory)
+            end
         end
     end
 
@@ -766,8 +806,8 @@ storage.utils.serialize_entity = function(entity)
 
         -- Get and merge contents from both lines
         serialized.inventory = {}
-        local line1_contents = storage.utils.get_contents_compat(line1)
-        local line2_contents = storage.utils.get_contents_compat(line2)
+        local line1_contents = FLE.utils.get_contents_compat(line1)
+        local line2_contents = FLE.utils.get_contents_compat(line2)
 
         -- Set terminus and source flags based on connections
         serialized.is_terminus = #entity.belt_neighbours["outputs"] == 0
@@ -878,8 +918,8 @@ storage.utils.serialize_entity = function(entity)
 
         -- Get the contents of both output lines
         serialized.inventory = {
-            storage.utils.get_contents_compat(entity.get_transport_line(1)),
-            storage.utils.get_contents_compat(entity.get_transport_line(2))
+            FLE.utils.get_contents_compat(entity.get_transport_line(1)),
+            FLE.utils.get_contents_compat(entity.get_transport_line(2))
         }
     end
 
@@ -919,12 +959,13 @@ storage.utils.serialize_entity = function(entity)
     if entity.type == "pipe" then
         serialized.connections = {}
         local fluid_name = nil
-        for _, connection in pairs(entity.fluidbox.get_pipe_connections(1)) do
+        local pipe_fluidbox = fluidbox_of(entity)
+        for _, connection in pairs(pipe_fluidbox and pipe_fluidbox.get_pipe_connections(1) or {}) do
             table.insert(serialized.connections, connection.position)
         end
         local contents_count = 0
         -- Factorio 2.0: get_fluid_system_contents -> get_fluid_segment_contents
-        local segment_contents = entity.fluidbox.get_fluid_segment_contents(1)
+        local segment_contents = pipe_fluidbox and pipe_fluidbox.get_fluid_segment_contents(1)
         if segment_contents then
             for name, count in pairs(segment_contents) do
                 contents_count = contents_count + count
@@ -934,7 +975,7 @@ storage.utils.serialize_entity = function(entity)
         serialized.contents = contents_count
         serialized.fluid = fluid_name
         -- Factorio 2.0: get_fluid_system_id -> get_fluid_segment_id, get_flow removed
-        serialized.fluidbox_id = entity.fluidbox.get_fluid_segment_id(1)
+        serialized.fluidbox_id = pipe_fluidbox and pipe_fluidbox.get_fluid_segment_id(1)
         serialized.flow_rate = 0
     end
 
@@ -942,12 +983,13 @@ storage.utils.serialize_entity = function(entity)
     if entity.type == "pipe-to-ground" then
         serialized.connections = {}
         local fluid_name = nil
-        for _, connection in pairs(entity.fluidbox.get_pipe_connections(1)) do
+        local underground_fluidbox = fluidbox_of(entity)
+        for _, connection in pairs(underground_fluidbox and underground_fluidbox.get_pipe_connections(1) or {}) do
             table.insert(serialized.connections, connection.position)
         end
         local contents_count = 0
         -- Factorio 2.0: get_fluid_system_contents -> get_fluid_segment_contents
-        local segment_contents = entity.fluidbox.get_fluid_segment_contents(1)
+        local segment_contents = underground_fluidbox and underground_fluidbox.get_fluid_segment_contents(1)
         if segment_contents then
             for name, count in pairs(segment_contents) do
                 contents_count = contents_count + count
@@ -955,7 +997,7 @@ storage.utils.serialize_entity = function(entity)
             end
         end
         -- Factorio 2.0: get_fluid_system_id -> get_fluid_segment_id, get_flow removed
-        serialized.fluidbox_id = entity.fluidbox.get_fluid_segment_id(1)
+        serialized.fluidbox_id = underground_fluidbox and underground_fluidbox.get_fluid_segment_id(1)
         serialized.flow_rate = 0
         serialized.contents = contents_count
         serialized.fluid = fluid_name
@@ -965,8 +1007,17 @@ storage.utils.serialize_entity = function(entity)
 
     -- Add input and output locations if the entity is a pump
     if entity.type == "pump" then
-        serialized.input_position = entity.fluidbox.get_connections(1)[1].position
-        serialized.output_position = entity.fluidbox.get_connections(2)[1].position
+        local pump_fluidbox = fluidbox_of(entity)
+        if pump_fluidbox then
+            local input_connections = pump_fluidbox.get_connections(1)
+            local output_connections = pump_fluidbox.get_connections(2)
+            if input_connections and input_connections[1] then
+                serialized.input_position = input_connections[1].position
+            end
+            if output_connections and output_connections[1] then
+                serialized.output_position = output_connections[1].position
+            end
+        end
     end
 
     -- Add the current research to the lab
@@ -993,7 +1044,7 @@ storage.utils.serialize_entity = function(entity)
         serialized.output_connection_points = {}
 
         local recipe = entity.get_recipe()
-        local mappings = storage.utils.get_refinery_fluid_mappings(entity, recipe)
+        local mappings = FLE.utils.get_refinery_fluid_mappings(entity, recipe)
         if mappings then
             serialized.input_connection_points = mappings.inputs
             serialized.output_connection_points = mappings.outputs
@@ -1006,7 +1057,7 @@ storage.utils.serialize_entity = function(entity)
         serialized.output_connection_points = {}
 
         local recipe = entity.get_recipe()
-        local mappings = storage.utils.get_chemical_plant_fluid_mappings(entity, recipe)
+        local mappings = FLE.utils.get_chemical_plant_fluid_mappings(entity, recipe)
         if mappings then
             serialized.input_connection_points = mappings.inputs
             serialized.output_connection_points = mappings.outputs
@@ -1035,7 +1086,7 @@ storage.utils.serialize_entity = function(entity)
 
     if entity.type == "storage-tank" then
         -- Get and filter connection points
-        local connection_points = storage.utils.get_storage_tank_connection_points(entity)
+        local connection_points = FLE.utils.get_storage_tank_connection_points(entity)
         local filtered_points = {}
 
         -- Filter out invalid connection points (e.g., those in water)
@@ -1049,15 +1100,15 @@ storage.utils.serialize_entity = function(entity)
         serialized.connection_points = filtered_points
 
         -- Add fluid box information
-        if entity.fluidbox and #entity.fluidbox > 0 then
-            game.print("There is a fluidbox")
-            local fluid = entity.fluidbox[1]
+        local fluidbox = fluidbox_of(entity)
+        if fluidbox_size(fluidbox) > 0 then
+            local fluid = fluidbox[1]
             if fluid then
                 serialized.fluid = string.format("\"%s\"", fluid.name)
                 serialized.fluid_amount = fluid.amount
                 serialized.fluid_temperature = fluid.temperature
                 -- Factorio 2.0: get_fluid_system_id -> get_fluid_segment_id
-                serialized.fluid_system_id = entity.fluidbox.get_fluid_segment_id(1)
+                serialized.fluid_system_id = fluidbox.get_fluid_segment_id(1)
             end
         end
 
@@ -1182,7 +1233,7 @@ storage.utils.serialize_entity = function(entity)
     -- Add recipes if the entity is a crafting machine
     if entity.type == "assembling-machine" or entity.type == "furnace" then
         if entity.get_recipe() then
-            serialized.recipe = storage.utils.serialize_recipe(entity.get_recipe())
+            serialized.recipe = FLE.utils.serialize_recipe(entity.get_recipe())
         end
     end
 
@@ -1226,16 +1277,24 @@ storage.utils.serialize_entity = function(entity)
         local parts_required = entity.prototype.rocket_parts_required or 100
         serialized.rocket_progress = (serialized.rocket_parts / parts_required) * 100.0
 
-        -- Get input inventories for rocket components
+        -- Get input inventories for rocket components. Factorio 2.1 renamed the
+        -- silo inventories into the generic crafter_* family, and get_inventory
+        -- raises when handed a removed define.
+        local function inventory_of(define)
+            if not define then return nil end
+            local ok, inventory = pcall(entity.get_inventory, define)
+            if not ok then return nil end
+            return inventory
+        end
         local rocket_inventory = {
-            rocket_part = entity.get_inventory(defines.inventory.rocket_silo_input),
-            result = entity.get_inventory(defines.inventory.rocket_silo_output)
+            rocket_part = inventory_of(INVENTORY.rocket_silo_input),
+            result = inventory_of(INVENTORY.rocket_silo_output)
         }
 
         -- Serialize the component inventories
         for name, inventory in pairs(rocket_inventory) do
             if inventory and not inventory.is_empty() then
-                serialized[name .. "_inventory"] = storage.utils.get_contents_compat(inventory)
+                serialized[name .. "_inventory"] = FLE.utils.get_contents_compat(inventory)
             end
         end
 
@@ -1274,13 +1333,13 @@ storage.utils.serialize_entity = function(entity)
     end
 
     if entity.type == "generator" then
-        serialized.connection_points = storage.utils.get_generator_connection_positions(entity)
+        serialized.connection_points = FLE.utils.get_generator_connection_positions(entity)
         serialized.energy_generated_last_tick = entity.energy_generated_last_tick
         --serialized.power_production = entity.power_production
     end
 
     if entity.name == "pumpjack" then
-        serialized.connection_points = storage.utils.get_pumpjack_connection_points(entity)
+        serialized.connection_points = FLE.utils.get_pumpjack_connection_points(entity)
     end
 
     -- Add fuel and input ingredients if the entity is a furnace or burner
@@ -1289,7 +1348,8 @@ storage.utils.serialize_entity = function(entity)
         if burner then
             add_burner_inventory(serialized, burner)
         end
-        local input_inventory = entity.get_inventory(defines.inventory.furnace_source)
+        local input_ok, input_inventory = pcall(entity.get_inventory, INVENTORY.furnace_source)
+        if not input_ok then input_inventory = nil end
         if input_inventory and #input_inventory > 0 then
             serialized.input_inventory = {}
             for i = 1, #input_inventory do
@@ -1303,13 +1363,14 @@ storage.utils.serialize_entity = function(entity)
 
     -- Add fluid box if the entity is an offshore pump
     if entity.type == "offshore-pump" then
-        serialized.connection_points = storage.utils.get_offshore_pump_connection_points(entity)
+        serialized.connection_points = FLE.utils.get_offshore_pump_connection_points(entity)
     end
 
     -- If entity has a fluidbox
-    if entity.fluidbox then
-        local fluid_box = entity.fluidbox
-        if fluid_box and #fluid_box > 0 then
+    local entity_fluidbox = fluidbox_of(entity)
+    if entity_fluidbox then
+        local fluid_box = entity_fluidbox
+        if fluidbox_size(fluid_box) > 0 then
             serialized.fluid_box = {}
             for i = 1, #fluid_box do
                 -- game.print("Fluid!")
@@ -1324,7 +1385,8 @@ storage.utils.serialize_entity = function(entity)
     -- Add fluid handler status check
     if is_fluid_handler(entity.type) then
         -- Check if the entity has a fluidbox
-        if not entity.fluidbox or #entity.fluidbox == 0 then
+        local handler_fluidbox = fluidbox_of(entity)
+        if fluidbox_size(handler_fluidbox) == 0 then
             serialized.status = "\"not_connected\""
             if not serialized.warnings then
                 serialized.warnings = {}
@@ -1335,15 +1397,15 @@ storage.utils.serialize_entity = function(entity)
             local fluid_systems = {}
             local has_fluid = false
             local fluid_contents = nil
-            for i = 1, #entity.fluidbox do
-                if entity.fluidbox[i] then
+            for i = 1, fluidbox_size(handler_fluidbox) do
+                if handler_fluidbox[i] then
                     -- Factorio 2.0: get_fluid_system_id -> get_fluid_segment_id
-                    local system_id = entity.fluidbox.get_fluid_segment_id(i)
+                    local system_id = handler_fluidbox.get_fluid_segment_id(i)
                     if system_id then
                         table.insert(fluid_systems, system_id)
                     end
                     has_fluid = true
-                    fluid_contents =  "\""..entity.fluidbox[i].name.."\""
+                    fluid_contents =  "\""..handler_fluidbox[i].name.."\""
                     break
                 end
             end

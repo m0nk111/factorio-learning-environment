@@ -1,36 +1,57 @@
+FLE = FLE or {}
+FLE.utils = FLE.utils or {}
+FLE.actions = FLE.actions or {}
+-- Factorio 2.1 removed several inventory defines (assembling_machine_*,
+-- furnace_*, reactor_*, lab_source, mining_drill_input, storage_tank, ...) in
+-- favour of the generic crafter_* family, while 2.0 only has the specific ones.
+-- Add every variant that exists and dedupe by id: that keeps the list dense for
+-- ipairs (a sparse literal stops at the first nil and silently skips the rest)
+-- on both engines, including the supported 2.0 image override.
+local function inventory_list()
+    local d = defines.inventory
+    local list = {}
+    local seen = {}
+    local function add(id)
+        if id ~= nil and not seen[id] then
+            seen[id] = true
+            list[#list + 1] = id
+        end
+    end
+    add(d.chest)
+    add(d.crafter_input)
+    add(d.furnace_source)
+    add(d.assembling_machine_input)
+    add(d.reactor_source)
+    add(d.mining_drill_input)
+    add(d.crafter_output)
+    add(d.furnace_result)
+    add(d.assembling_machine_output)
+    add(d.reactor_result)
+    add(d.crafter_modules)
+    add(d.furnace_modules)
+    add(d.assembling_machine_modules)
+    add(d.lab_output)
+    add(d.storage_tank)
+    add(d.fuel)
+    add(d.burnt_result)
+    add(d.lab_input)
+    add(d.lab_modules)
+    add(d.item_main)
+    add(d.robot_cargo)
+    add(d.robot_repair)
+    add(d.car_trunk)
+    add(d.car_ammo)
+    add(d.roboport_material)
+    add(d.roboport_robot)
+    add(d.turret_ammo)
+    add(d.cargo_wagon)
+    add(d.rocket_silo_rocket)
+    return list
+end
+
 -- Helper function to check all possible inventories of an entity
 local function get_entity_item_count(entity, item_name)
-    local inventory_types = {
-        defines.inventory.chest,
-        defines.inventory.furnace_source,
-        defines.inventory.furnace_result,
-        defines.inventory.assembling_machine_input,
-        defines.inventory.assembling_machine_output,
-        defines.inventory.fuel,
-        defines.inventory.burnt_result,
-        defines.inventory.reactor_source,
-        defines.inventory.reactor_result,
-        defines.inventory.lab_input,
-        defines.inventory.lab_source,
-        defines.inventory.mining_drill_input,
-        defines.inventory.item_main,  -- For cargo wagons
-        defines.inventory.robot_cargo,
-        defines.inventory.robot_repair,
-        defines.inventory.car_trunk,
-        defines.inventory.car_fuel,
-        defines.inventory.roboport_material,
-        defines.inventory.roboport_robot,
-        defines.inventory.storage_tank,
-        defines.inventory.artillery_turret_ammo,
-        defines.inventory.turret_ammo,
-        defines.inventory.beacon_modules,
-        defines.inventory.character_main,
-        defines.inventory.character_guns,
-        defines.inventory.character_ammo,
-        defines.inventory.character_armor,
-        defines.inventory.character_vehicle,
-        defines.inventory.character_trash
-    }
+        local inventory_types = inventory_list()
 
     local total_count = 0
     for _, inv_type in ipairs(inventory_types) do
@@ -44,37 +65,7 @@ end
 
 -- Helper function to remove items from any valid inventory
 local function remove_items_from_entity(entity, stack)
-    local inventory_types = {
-        defines.inventory.chest,
-        defines.inventory.furnace_source,
-        defines.inventory.furnace_result,
-        defines.inventory.assembling_machine_input,
-        defines.inventory.assembling_machine_output,
-        defines.inventory.fuel,
-        defines.inventory.burnt_result,
-        defines.inventory.reactor_source,
-        defines.inventory.reactor_result,
-        defines.inventory.lab_input,
-        defines.inventory.lab_source,
-        defines.inventory.mining_drill_input,
-        defines.inventory.item_main,
-        defines.inventory.robot_cargo,
-        defines.inventory.robot_repair,
-        defines.inventory.car_trunk,
-        defines.inventory.car_fuel,
-        defines.inventory.roboport_material,
-        defines.inventory.roboport_robot,
-        defines.inventory.storage_tank,
-        defines.inventory.artillery_turret_ammo,
-        defines.inventory.turret_ammo,
-        defines.inventory.beacon_modules,
-        defines.inventory.character_main,
-        defines.inventory.character_guns,
-        defines.inventory.character_ammo,
-        defines.inventory.character_armor,
-        defines.inventory.character_vehicle,
-        defines.inventory.character_trash
-    }
+        local inventory_types = inventory_list()
 
     local items_remaining = stack.count
     local total_removed = 0
@@ -96,9 +87,9 @@ local function remove_items_from_entity(entity, stack)
     return total_removed
 end
 
-storage.actions.extract_item = function(player_index, extract_item, count, x, y, source_name)
+FLE.actions.extract_item = function(player_index, extract_item, count, x, y, source_name)
     -- Ensure we have a valid character, recreating if necessary
-    local player = storage.utils.ensure_valid_character(player_index)
+    local player = FLE.utils.ensure_valid_character(player_index)
     local position = {x=x, y=y}
     local surface = player.surface
 

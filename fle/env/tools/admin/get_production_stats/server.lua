@@ -1,4 +1,6 @@
-storage.actions.production_stats = function(player)
+FLE = FLE or {}
+FLE.actions = FLE.actions or {}
+FLE.actions.production_stats = function(player)
     local production_diff = {}
     local consumption_diff = {}
     local harvested_items = storage.harvested_items
@@ -39,7 +41,7 @@ storage.actions.production_stats = function(player)
     }
 end
 
-storage.actions.reset_production_stats = function(player)
+FLE.actions.reset_production_stats = function(player)
     local force = game.forces.player
     local surface = game.surfaces[1]
 

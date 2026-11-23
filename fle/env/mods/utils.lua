@@ -1,5 +1,7 @@
+FLE = FLE or {}
+FLE.utils = FLE.utils or {}
 -- utils.lua
-storage.utils.remove_enemies = function ()
+FLE.utils.remove_enemies = function ()
     game.forces["enemy"].kill_all_units()  -- Removes all biters
     game.map_settings.enemy_expansion.enabled = false  -- Stops biters from expanding
     game.map_settings.enemy_evolution.enabled = false  -- Stops biters from evolving
@@ -11,7 +13,7 @@ end
 
 local directions = {'north', 'northeast', 'east', 'southeast', 'south', 'southwest', 'west', 'northwest'}
 
-storage.utils.get_direction = function(from_position, to_position)
+FLE.utils.get_direction = function(from_position, to_position)
     local dx = to_position.x - from_position.x
     local dy = to_position.y - from_position.y
     local adx = math.abs(dx)
@@ -34,7 +36,7 @@ storage.utils.get_direction = function(from_position, to_position)
     end
 end
 
-storage.utils.get_direction_with_diagonals = function(from_pos, to_pos)
+FLE.utils.get_direction_with_diagonals = function(from_pos, to_pos)
     local dx = to_pos.x - from_pos.x
     local dy = to_pos.y - from_pos.y
 
@@ -59,7 +61,7 @@ storage.utils.get_direction_with_diagonals = function(from_pos, to_pos)
 end
 
 
-storage.utils.get_closest_entity = function(player, position)
+FLE.utils.get_closest_entity = function(player, position)
     local closest_distance = math.huge
     local closest_entity = nil
     local entities = player.surface.find_entities_filtered{
@@ -81,7 +83,7 @@ storage.utils.get_closest_entity = function(player, position)
     return closest_entity
 end
 
-storage.utils.calculate_movement_ticks = function(player, from_pos, to_pos)
+FLE.utils.calculate_movement_ticks = function(player, from_pos, to_pos)
     -- Calculate distance between points
     local dx = to_pos.x - from_pos.x
     local dy = to_pos.y - from_pos.y
@@ -101,7 +103,7 @@ end
 -- Wrapper around LuaSurface.can_place_entity that replicates all checks LuaPlayer.can_place_entity performs.
 -- This allows our code to validate placement without relying on an actual LuaPlayer instance.
 -- extra_params can be provided by callers to pass additional flags (e.g. fast_replace) if needed.
-storage.utils.can_place_entity = function(player, entity_name, position, direction, extra_params)
+FLE.utils.can_place_entity = function(player, entity_name, position, direction, extra_params)
     local params = extra_params or {}
     params.name = entity_name
     params.position = position
@@ -112,7 +114,7 @@ storage.utils.can_place_entity = function(player, entity_name, position, directi
     return player.surface.can_place_entity(params)
 end
 
-storage.utils.avoid_entity = function(player_index, entity, position, direction)
+FLE.utils.avoid_entity = function(player_index, entity, position, direction)
     local player = storage.agent_characters[player_index]
     local player_position = player.position
     for i=0, 10 do
@@ -120,7 +122,7 @@ storage.utils.avoid_entity = function(player_index, entity, position, direction)
             name = entity,
             force = "player",
             position = position,
-            direction = storage.utils.get_entity_direction(entity, direction)
+            direction = FLE.utils.get_entity_direction(entity, direction)
         }
         if can_place then
             return true
@@ -152,7 +154,7 @@ end)
 -- Utility function to ensure a valid character exists for a given player index
 -- Call this before any operation that needs the character
 -- Returns the valid character entity, or creates a new one if invalid/missing
-storage.utils.ensure_valid_character = function(player_index)
+FLE.utils.ensure_valid_character = function(player_index)
     if not storage.agent_characters then
         storage.agent_characters = {}
     end
@@ -215,7 +217,7 @@ function dump(o)
    return table.concat(parts)
 end
 
-function storage.utils.inspect(player, radius, position)
+function FLE.utils.inspect(player, radius, position)
     local surface = player.surface
     local bounding_box = {
         left_top = {x = position.x - radius, y = position.y - radius},
@@ -240,11 +242,11 @@ function storage.utils.inspect(player, radius, position)
 
             -- Get entity contents if it has an inventory
             if entity.get_inventory(defines.inventory.chest) then
-                local inventory = storage.utils.get_contents_compat(entity.get_inventory(defines.inventory.chest))
+                local inventory = FLE.utils.get_contents_compat(entity.get_inventory(defines.inventory.chest))
                 data.contents = inventory
             end
 
-            data.warnings = storage.utils.get_issues(entity)
+            data.warnings = FLE.utils.get_issues(entity)
 
             -- Get entity orientation if it has an orientation attribute
             if entity.type == "train-stop" or entity.type == "car" or entity.type == "locomotive" then
@@ -314,13 +316,13 @@ function storage.utils.inspect(player, radius, position)
 end
 
 -- Format player inventory contents for error messages
-storage.utils.format_inventory_for_error = function(player)
+FLE.utils.format_inventory_for_error = function(player)
     local main_inv = player.get_inventory(defines.inventory.character_main)
     if not main_inv then
         return "empty"
     end
 
-    local contents = storage.utils.get_contents_compat(main_inv)
+    local contents = FLE.utils.get_contents_compat(main_inv)
     if not contents or next(contents) == nil then
         return "empty"
     end

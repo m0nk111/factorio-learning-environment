@@ -1,4 +1,6 @@
-storage.actions.save_research_state = function(player_index)
+FLE = FLE or {}
+FLE.actions = FLE.actions or {}
+FLE.actions.save_research_state = function(player_index)
     -- Validate the character exists and is valid
     local player = storage.agent_characters and storage.agent_characters[player_index]
     if not player or not player.valid then

@@ -1,4 +1,7 @@
-storage.actions.rotate_entity = function(player_index, x, y, direction, entity)
+FLE = FLE or {}
+FLE.utils = FLE.utils or {}
+FLE.actions = FLE.actions or {}
+FLE.actions.rotate_entity = function(player_index, x, y, direction, entity)
     local character = storage.agent_characters[player_index]
     local lua_player = game.players[player_index]  -- Get the actual LuaPlayer object
     local position = {x=x, y=y}
@@ -40,7 +43,7 @@ storage.actions.rotate_entity = function(player_index, x, y, direction, entity)
         error("Invalid direction " .. direction .. " provided. Please use 0 (north), 4 (east), 8 (south), or 12 (west).")
     end
 
-    local target_direction = storage.utils.get_entity_direction(closest_entity.name, direction)
+    local target_direction = FLE.utils.get_entity_direction(closest_entity.name, direction)
 
     -- For assembling machines in Factorio 2.0, rotation is complex due to fluid_boxes_off_when_no_fluid_recipe
     -- Without the fle-compat mod, assemblers without a fluid recipe cannot be rotated via .rotate(),
@@ -64,7 +67,9 @@ storage.actions.rotate_entity = function(player_index, x, y, direction, entity)
             local saved_outputs = {}
             local saved_modules = {}
 
-            local input_inv = closest_entity.get_inventory(defines.inventory.assembling_machine_input)
+            local input_define = defines.inventory.assembling_machine_input or defines.inventory.crafter_input
+            local input_ok, input_inv = pcall(closest_entity.get_inventory, input_define)
+            if not input_ok then input_inv = nil end
             if input_inv then
                 for i = 1, #input_inv do
                     local stack = input_inv[i]
@@ -74,7 +79,9 @@ storage.actions.rotate_entity = function(player_index, x, y, direction, entity)
                 end
             end
 
-            local output_inv = closest_entity.get_inventory(defines.inventory.assembling_machine_output)
+            local output_define = defines.inventory.assembling_machine_output or defines.inventory.crafter_output
+            local output_ok, output_inv = pcall(closest_entity.get_inventory, output_define)
+            if not output_ok then output_inv = nil end
             if output_inv then
                 for i = 1, #output_inv do
                     local stack = output_inv[i]
@@ -84,7 +91,9 @@ storage.actions.rotate_entity = function(player_index, x, y, direction, entity)
                 end
             end
 
-            local modules_inv = closest_entity.get_inventory(defines.inventory.assembling_machine_modules)
+            local modules_define = defines.inventory.assembling_machine_modules or defines.inventory.crafter_modules
+            local modules_ok, modules_inv = pcall(closest_entity.get_inventory, modules_define)
+            if not modules_ok then modules_inv = nil end
             if modules_inv then
                 for i = 1, #modules_inv do
                     local stack = modules_inv[i]
@@ -121,21 +130,27 @@ storage.actions.rotate_entity = function(player_index, x, y, direction, entity)
                 end
 
                 -- Restore inventories
-                local new_input_inv = new_entity.get_inventory(defines.inventory.assembling_machine_input)
+                local new_input_define = defines.inventory.assembling_machine_input or defines.inventory.crafter_input
+                local new_input_ok, new_input_inv = pcall(new_entity.get_inventory, new_input_define)
+                if not new_input_ok then new_input_inv = nil end
                 if new_input_inv then
                     for _, item in pairs(saved_inputs) do
                         new_input_inv.insert(item)
                     end
                 end
 
-                local new_output_inv = new_entity.get_inventory(defines.inventory.assembling_machine_output)
+                local new_output_define = defines.inventory.assembling_machine_output or defines.inventory.crafter_output
+                local new_output_ok, new_output_inv = pcall(new_entity.get_inventory, new_output_define)
+                if not new_output_ok then new_output_inv = nil end
                 if new_output_inv then
                     for _, item in pairs(saved_outputs) do
                         new_output_inv.insert(item)
                     end
                 end
 
-                local new_modules_inv = new_entity.get_inventory(defines.inventory.assembling_machine_modules)
+                local new_modules_define = defines.inventory.assembling_machine_modules or defines.inventory.crafter_modules
+                local new_modules_ok, new_modules_inv = pcall(new_entity.get_inventory, new_modules_define)
+                if not new_modules_ok then new_modules_inv = nil end
                 if new_modules_inv then
                     for _, item in pairs(saved_modules) do
                         new_modules_inv.insert(item)
@@ -174,6 +189,6 @@ storage.actions.rotate_entity = function(player_index, x, y, direction, entity)
         closest_entity.teleport(aligned_position)
     end
 
-    local serialized = storage.utils.serialize_entity(closest_entity)
+    local serialized = FLE.utils.serialize_entity(closest_entity)
     return serialized
 end

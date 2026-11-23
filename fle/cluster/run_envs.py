@@ -12,9 +12,28 @@ import zipfile
 import importlib.resources as ir
 from platformdirs import user_state_dir
 
-START_RCON_PORT = 27000
-START_GAME_PORT = 34197
-RCON_PASSWORD = "factorio"
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        raise ValueError(f"{name} must be an integer port number, got {raw!r}")
+
+
+# Host-side bases. Defaults sit above the ports a live Factorio server usually
+# occupies (34197/game, 27000+rcon), so a stray cluster run cannot bind or take
+# over a world that is already being played. Container-internal ports stay at
+# the Factorio defaults; only the published mapping moves.
+START_RCON_PORT = _env_int("FLE_RCON_PORT_BASE", 27100)
+START_GAME_PORT = _env_int("FLE_GAME_PORT_BASE", 35197)
+RCON_PASSWORD = os.environ.get("FLE_RCON_PASSWORD", "factorio")
+
+# Image for every launched server. 2.1 loads the current Space Age build; pin
+# FLE_FACTORIO_IMAGE to a 2.0 tag when an older world must be reproduced.
+FACTORIO_IMAGE = os.environ.get("FLE_FACTORIO_IMAGE", "factoriotools/factorio:2.1.23")
 
 
 def resolve_state_dir() -> Path:
@@ -59,7 +78,7 @@ class ComposeGenerator:
     """Compose YAML generator with centralized path handling."""
 
     rcon_password = RCON_PASSWORD
-    image = "factoriotools/factorio:2.0.73"
+    image = FACTORIO_IMAGE
     map_gen_seed = 44340
     internal_rcon_port = 27015
     internal_game_port = 34197

@@ -1,7 +1,10 @@
-storage.actions.inspect_inventory = function(player_index, is_character_inventory, x, y, entity, all_players)
+FLE = FLE or {}
+FLE.utils = FLE.utils or {}
+FLE.actions = FLE.actions or {}
+FLE.actions.inspect_inventory = function(player_index, is_character_inventory, x, y, entity, all_players)
     local position = {x=x, y=y}
     -- Ensure we have a valid character, recreating if necessary
-    local player = storage.utils.ensure_valid_character(player_index)
+    local player = FLE.utils.ensure_valid_character(player_index)
     local surface = player.surface
     local is_fast = storage.fast
     local automatic_close = True
@@ -13,7 +16,7 @@ storage.actions.inspect_inventory = function(player_index, is_character_inventor
            return nil
        end
 
-       local item_counts = storage.utils.get_contents_compat(inventory)
+       local item_counts = FLE.utils.get_contents_compat(inventory)
        return item_counts
     end
 
@@ -58,8 +61,8 @@ storage.actions.inspect_inventory = function(player_index, is_character_inventor
            if not closest_entity or not closest_entity.valid then
                error("No valid entity at given coordinates.")
            end
-           local source = storage.utils.get_contents_compat(closest_entity.get_inventory(defines.inventory.crafter_input))
-           local output = storage.utils.get_contents_compat(closest_entity.get_inventory(defines.inventory.crafter_output))
+           local source = FLE.utils.get_contents_compat(closest_entity.get_inventory(defines.inventory.crafter_input))
+           local output = FLE.utils.get_contents_compat(closest_entity.get_inventory(defines.inventory.crafter_output))
            for k, v in pairs(output) do
                source[k] = (source[k] or 0) + v
            end
@@ -69,13 +72,13 @@ storage.actions.inspect_inventory = function(player_index, is_character_inventor
            if not closest_entity or not closest_entity.valid then
                error("No valid entity at given coordinates.")
            end
-           return storage.utils.get_contents_compat(closest_entity.get_inventory(defines.inventory.lab_input))
+           return FLE.utils.get_contents_compat(closest_entity.get_inventory(defines.inventory.lab_input))
        end
        -- Note: centrifuge is now handled by the unified assembling-machine block above
        if not closest_entity or not closest_entity.valid then
            error("No valid entity at given coordinates.")
        end
-       return storage.utils.get_contents_compat(closest_entity.get_inventory(defines.inventory.chest))
+       return FLE.utils.get_contents_compat(closest_entity.get_inventory(defines.inventory.chest))
     end
 
     local player = storage.agent_characters[player_index]

@@ -1,4 +1,6 @@
-storage.actions.load_blueprint = function(player_index, bp, offset_x, offset_y)
+FLE = FLE or {}
+FLE.actions = FLE.actions or {}
+FLE.actions.load_blueprint = function(player_index, bp, offset_x, offset_y)
     --- https://forums.factorio.com/viewtopic.php?t=111437
     --- by CharacterOverflow @ Wed Feb 21, 2024 2:34 pm
 

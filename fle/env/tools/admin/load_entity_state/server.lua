@@ -1,3 +1,5 @@
+FLE = FLE or {}
+FLE.actions = FLE.actions or {}
 -- Helper function to unquote strings
 local function unquote_string(str)
     if not str then return nil end
@@ -5,7 +7,7 @@ local function unquote_string(str)
 end
 
 -- Main deserialization function
-storage.actions.load_entity_state = function(player, stored_json_data)
+FLE.actions.load_entity_state = function(player, stored_json_data)
     local player_entity = storage.agent_characters[player]
     local surface = player_entity.surface
     local created_entities = {}

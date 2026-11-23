@@ -1,4 +1,6 @@
-storage.actions.render_message = function(player_index, message)
+FLE = FLE or {}
+FLE.actions = FLE.actions or {}
+FLE.actions.render_message = function(player_index, message)
     -- Get color based on player index
     local color = {r = 1, g = 1, b = 1} -- Default white
     if player_index == 1 then

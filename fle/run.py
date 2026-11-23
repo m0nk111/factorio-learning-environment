@@ -6,6 +6,8 @@ import subprocess
 from pathlib import Path
 import importlib.resources
 
+from fle.cluster.run_envs import START_RCON_PORT
+
 # from fle.env.gym_env.run_eval import main as run_eval
 from fle.agents.data.sprites.download import download_sprites_from_hf, generate_sprites
 
@@ -297,7 +299,7 @@ def fle_inspect_eval(args):
             def _count_reachable(n):
                 found = []
                 for i in range(n):
-                    if check_port("localhost", 27000 + i, timeout=1):
+                    if check_port("localhost", START_RCON_PORT + i, timeout=1):
                         found.append(f"factorio_{i}")
                 return found
 
