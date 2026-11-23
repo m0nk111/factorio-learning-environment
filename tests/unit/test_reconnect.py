@@ -16,6 +16,8 @@ from typing import Dict, List, Optional
 import pytest
 
 MCP_PACKAGE = "fle.env.protocols._mcp"
+PARENT_PACKAGE = "fle.env.protocols"
+_MISSING = object()
 ADDRESS = "127.0.0.1"
 PORT_A = 27100  # host port the session is attached to
 PORT_B = 27200  # host port the container publishes after it was recreated
@@ -160,18 +162,29 @@ def _mcp_module_names():
     }
 
 
+def _parent_mcp_attribute():
+    """The ``_mcp`` attribute the import machinery sets on ``fle.env.protocols``."""
+    parent = sys.modules.get(PARENT_PACKAGE)
+    return _MISSING if parent is None else getattr(parent, "_mcp", _MISSING)
+
+
 @pytest.fixture(scope="module", autouse=True)
-def mcp_modules_are_restored():
-    """The stubbed import must leave ``sys.modules`` exactly as it found it."""
-    before = _mcp_module_names()
+def mcp_import_state_is_restored():
+    """The stubbed import must leave the MCP import state exactly as it found it."""
+    names_before = _mcp_module_names()
+    attribute_before = _parent_mcp_attribute()
     yield
-    assert _mcp_module_names() == before
+    assert _mcp_module_names() == names_before
+    assert _parent_mcp_attribute() is attribute_before, (
+        "fle.env.protocols._mcp must point at the original package module again"
+    )
 
 
 @pytest.fixture()
 def harness(monkeypatch):
     """Build a ``Harness`` against the real tools module, with no Docker and no RCON."""
     saved: Dict[str, types.ModuleType] = {}
+    saved_attribute = None
 
     def _purge() -> None:
         for name in [
@@ -182,7 +195,9 @@ def harness(monkeypatch):
             del sys.modules[name]
 
     def _build(cluster: FakeCluster) -> Harness:
+        nonlocal saved_attribute
         if not saved:
+            saved_attribute = _parent_mcp_attribute()
             saved.update(
                 {
                     name: module
@@ -227,6 +242,15 @@ def harness(monkeypatch):
 
     _purge()
     sys.modules.update(saved)
+    # Re-importing the package also rebinds `fle.env.protocols._mcp`, so the
+    # parent attribute has to be restored as well.
+    parent = sys.modules.get(PARENT_PACKAGE)
+    if parent is not None:
+        if saved_attribute is _MISSING:
+            if getattr(parent, "_mcp", _MISSING) is not _MISSING:
+                del parent._mcp
+        elif saved_attribute is not None:
+            parent._mcp = saved_attribute
 
 
 def test_reconnect_follows_a_recreated_container_to_its_new_port(harness):
