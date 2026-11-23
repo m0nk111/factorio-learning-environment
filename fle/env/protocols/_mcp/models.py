@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Dict, List, Union
+from typing import Dict, List, Optional, Union
 
 
 @dataclass
@@ -10,6 +10,7 @@ class FactorioServer:
     tcp_port: int
     instance_id: int
     name: str = None
+    udp_port: Optional[int] = None
     connected: bool = False
     last_checked: float = 0
     is_active: bool = False

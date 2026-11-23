@@ -196,12 +196,24 @@ class FactorioInstance:
         num_agents=1,
         reset_speed=10,
         reset_paused=False,
+        reset_on_init=True,
         **kwargs,
     ):
+        """Attach to a Factorio server.
+
+        Args:
+            reset_on_init: provision the world on attach — reset the game state,
+                clear entities around the agents, apply the starting inventory
+                and generate chunks. This is what the evaluation harness wants.
+                Set it to False to attach to a world that already holds someone's
+                factory and leave its contents alone; the Lua layer still loads
+                and the agents still get characters.
+        """
         self.id = str(uuid.uuid4())[:8]
         self.num_agents = num_agents
         self.persistent_vars = {}
         self.tcp_port = tcp_port
+        self.reset_on_init = reset_on_init
         self.rcon_client, self.address = self.connect_to_server(address, tcp_port)
         self.fast = fast
         self._ticks_elapsed = 0
@@ -511,8 +523,18 @@ class FactorioInstance:
     def initialise(
         self, fast=True, all_technologies_researched=True, clear_entities=True
     ):
+        """Install the Lua layer, and provision the world only when asked to.
+
+        With ``reset_on_init=False`` this loads the Lua layer and stops there:
+        no game-state reset, no entity clearing, no chunk generation, no enemy
+        removal. Attaching to a world must not rewrite it — a session pointed at
+        a seeded save used to end up with a pristine regenerated map (belts and
+        assemblers gone, terrain re-rolled) before it had run a single action.
+        """
         self.rcon_client.send_command(f"/sc storage.fast = {str(fast).lower()}")
-        self.first_namespace._create_agent_characters(self.num_agents)
+
+        if self.reset_on_init:
+            self.first_namespace._create_agent_characters(self.num_agents)
 
         init_scripts = [
             "lualib_util",
@@ -525,6 +547,9 @@ class FactorioInstance:
         ]
         for script_name in init_scripts:
             self.lua_script_manager.load_init_into_game(script_name)
+
+        if not self.reset_on_init:
+            return
 
         if self.peaceful:
             self.rcon_client.send_command("/sc FLE.utils.remove_enemies()")

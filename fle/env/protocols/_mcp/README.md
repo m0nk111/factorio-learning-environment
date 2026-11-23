@@ -114,8 +114,32 @@ The server follows this lifecycle:
 
 1. Initialize the MCP server when a new session begins
 2. Scan for running Factorio servers
-3. Automatically connect to the first active server found
-4. Clean up resources when the session ends
+3. Connect to the pinned server, or to the first active server found
+4. Close the RCON connection and drop in-process state when the session ends
+
+## World safety
+
+A session attaches to a world that may already contain someone's factory, so by
+default it never rewrites it: closing a session closes RCON and nothing else,
+and attaching does not re-provision the world. The lab behaviour — regenerate
+the map on attach, wipe it on shutdown — stays available, but only when asked
+for explicitly.
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `FLE_SERVER` | unset | Docker name of the container to attach to (e.g. `factorio_1`). With a pin the session attaches to exactly that container or fails with the candidates listed; only that container is probed. |
+| `FLE_RCON_PORT` | unset | Pin the target by published host RCON port instead of, or together with, the name. A name and port that point at different containers fail loudly. |
+| `FLE_RESET_ON_CONNECT` | `0` | Provision the world when the session attaches: reset game state, clear entities around the agents, apply the starting inventory, generate chunks and remove enemies. |
+| `FLE_RESET_ON_SHUTDOWN` | `0` | Reset the world when the session ends. |
+
+Without a pin the historical choice is kept — the first active server — but
+every candidate (name, address, ports) and the selected one are logged to
+stderr, so an attachment to the wrong world is visible instead of silent.
+
+This matters because these flags used to be implicit: one initialize-and-exit
+cycle against a seeded save (162 belts, 4 assemblers, 43,758 trees) left a bare
+regenerated map (0 belts, 0 assemblers, 57,272 trees), because both the connect
+path and the shutdown path called `game.reset_game_state()`.
 
 ## Development
 

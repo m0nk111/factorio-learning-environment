@@ -4,6 +4,12 @@ Initialization module for the Factorio MCP server with automatic connection
 
 import asyncio
 import sys
+from fle.commons.cluster_ips import (
+    ContainerSelectionError,
+    format_candidates,
+    select_container,
+)
+from fle.env.protocols._mcp import config
 from fle.env.protocols._mcp.state import FactorioMCPState
 
 # Initialize server state
@@ -30,7 +36,14 @@ def log_info(message):
 
 # Handle initialization at session start
 async def initialize_session(ctx=None):
-    """Automatically initializes the Factorio server when a session begins"""
+    """Attach the session to one Factorio server.
+
+    The target is explicit when ``FLE_SERVER``/``FLE_RCON_PORT`` is set: the
+    session connects to exactly that container, or raises with the candidates
+    listed. Without a pin the historical choice is kept — the first active
+    server — but every candidate is logged together with the one that was
+    picked, so an attachment to the wrong world is visible instead of silent.
+    """
     log_info("Initializing Factorio session...")
 
     try:
@@ -41,36 +54,73 @@ async def initialize_session(ctx=None):
         if not servers:
             return "No Factorio servers found. Please ensure Factorio containers are running."
 
-        # Automatically connect to the first active server
-        active_servers = [s for s in servers if s.is_active]
-        log_info(f"Active servers: {len(active_servers)}")
+        pin_name = config.server_pin_name()
+        pin_rcon_port = config.server_pin_rcon_port()
+        pinned = pin_name is not None or pin_rcon_port is not None
 
-        if active_servers:
-            server = active_servers[0]
-            log_info(f"Auto-connecting to server {server.instance_id}: {server.name}")
-            success = await state.connect_to_server(server.instance_id)
+        log_info("Server candidates:\n" + format_candidates(servers))
 
-            if not success:
-                return f"Failed to connect to server {server.name}"
-
-            if state.active_server is None:
-                return "Connection succeeded but active_server not set"
-
-            return f"Connected to Factorio server {server.name} ({server.address}:{server.tcp_port})"
+        if pinned:
+            server = select_container(servers, name=pin_name, rcon_port=pin_rcon_port)
+            if not server.is_active:
+                raise ContainerSelectionError(
+                    f"Pinned server {server.name} ({server.address}:{server.tcp_port}) "
+                    f"is not reachable: {server.system_response or 'unknown error'}. "
+                    f"Candidates:\n{format_candidates(servers)}"
+                )
         else:
-            return "No active Factorio servers available for connection"
+            active_servers = [s for s in servers if s.is_active]
+            log_info(f"Active servers: {len(active_servers)}")
+            if not active_servers:
+                return "No active Factorio servers available for connection"
+            server = select_container(active_servers)
+
+        log_info(
+            f"Connecting to server {server.instance_id}: {server.name} "
+            f"({server.address}:{server.tcp_port})"
+            + (" [pinned]" if pinned else " [first active server]")
+        )
+        success = await state.connect_to_server(server.instance_id)
+
+        if not success:
+            return f"Failed to connect to server {server.name}"
+
+        if state.active_server is None:
+            return "Connection succeeded but active_server not set"
+
+        return f"Connected to Factorio server {server.name} ({server.address}:{server.tcp_port})"
     except Exception as e:
         log_info(f"Error during initialization: {e}")
         return f"Initialization failed: {str(e)}"
 
 
 async def shutdown_session():
-    """Clean up when session ends"""
+    """Close the RCON connection and drop in-process state.
+
+    This does not reset the game. Resetting here wiped the world the session
+    was pointed at: one initialize-and-exit cycle turned a seeded save into a
+    pristine regenerated map (belts and assemblers gone, trees re-rolled). The
+    lab behaviour is opt-in through ``FLE_RESET_ON_SHUTDOWN=1``.
+    """
     # Close any active connections
     if state.active_server:
-        log_info("Disconnecting from Factorio server...")
-        state.active_server.reset()
+        server = state.active_server
         state.active_server = None
+        log_info("Disconnecting from Factorio server...")
+
+        if config.reset_on_shutdown():
+            log_info(
+                "FLE_RESET_ON_SHUTDOWN is set: resetting the game state on shutdown"
+            )
+            try:
+                server.reset()
+            except Exception as e:
+                log_info(f"Reset on shutdown failed: {e}")
+
+        try:
+            server.cleanup()
+        except Exception as e:
+            log_info(f"Closing the RCON connection failed: {e}")
 
     # Clear any temporary state
     state.vcs_repos.clear()

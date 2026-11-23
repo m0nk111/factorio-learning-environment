@@ -6,7 +6,11 @@ from typing import Any, Dict, List, Optional
 from fle.env.a2a_instance import A2AFactorioInstance
 import gymnasium as gym
 
-from fle.commons.cluster_ips import get_local_container_ips
+from fle.commons.cluster_ips import (
+    get_local_container_ips,
+    list_factorio_containers,
+    select_container,
+)
 from fle.commons.asyncio_utils import run_async_safely
 from fle.env import FactorioInstance
 from fle.env.gym_env.environment import FactorioGymEnv
@@ -95,7 +99,13 @@ class FactorioGymRegistry:
 _registry = FactorioGymRegistry()
 
 
-def make_factorio_env(spec: GymEnvironmentSpec, run_idx: int) -> FactorioGymEnv:
+def make_factorio_env(
+    spec: GymEnvironmentSpec,
+    run_idx: int,
+    reset_on_init: bool = True,
+    container_name: Optional[str] = None,
+    rcon_port: Optional[int] = None,
+) -> FactorioGymEnv:
     """Factory function to create a Factorio gym environment.
 
     The instance-creation block (FactorioInstance build + task.setup +
@@ -108,6 +118,15 @@ def make_factorio_env(spec: GymEnvironmentSpec, run_idx: int) -> FactorioGymEnv:
 
     Configuration errors (no containers available, invalid run_idx) are
     raised without retry — they won't fix themselves.
+
+    Args:
+        reset_on_init: provision the world (reset game state, task setup). The
+            evaluation harness needs this; a caller attaching to a world that
+            already holds a factory passes False.
+        container_name / rcon_port: explicit target container. When set, the
+            environment attaches to exactly that container instead of the
+            ``PORT_OFFSET + run_idx`` position, and an unresolvable pin raises
+            with the candidates listed.
     """
     # Create task from the task definition
     task = TaskFactory.create_task(spec.task_config_path)
@@ -115,6 +134,14 @@ def make_factorio_env(spec: GymEnvironmentSpec, run_idx: int) -> FactorioGymEnv:
     # Resolve server address (no retry — pure config)
     address = os.getenv("FACTORIO_SERVER_ADDRESS")
     tcp_port = os.getenv("FACTORIO_SERVER_PORT")
+
+    if not address and not tcp_port and (container_name or rcon_port):
+        pinned = select_container(
+            list_factorio_containers(), name=container_name, rcon_port=rcon_port
+        )
+        address = pinned.address
+        tcp_port = pinned.tcp_port
+        print(f"Using pinned Factorio container {pinned.describe()}")
 
     if not address and not tcp_port:
         try:
@@ -169,6 +196,7 @@ def make_factorio_env(spec: GymEnvironmentSpec, run_idx: int) -> FactorioGymEnv:
         instance = None
         try:
             attempt_kwargs = dict(common_kwargs)
+            attempt_kwargs["reset_on_init"] = reset_on_init
             if attempt > 1:
                 # Force fresh Lua script upload on retry — clears stale
                 # server-side state that survived ``cleanup()``.
@@ -184,8 +212,11 @@ def make_factorio_env(spec: GymEnvironmentSpec, run_idx: int) -> FactorioGymEnv:
             # Set initial speed and unpause
             instance.set_speed_and_unpause(10)
 
-            # Setup the task
-            task.setup(instance)
+            # Setup the task. Task setup resets the game state and snapshots a
+            # starting GameState, so it belongs to provisioning only: an
+            # attaching session must not re-provision the world it attaches to.
+            if reset_on_init:
+                task.setup(instance)
 
             # Create and return the gym environment
             return FactorioGymEnv(

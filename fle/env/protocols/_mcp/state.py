@@ -4,8 +4,9 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any
 
 from fle.env import FactorioInstance
-from fle.commons.cluster_ips import get_local_container_ips
+from fle.commons.cluster_ips import list_factorio_containers, select_container
 from fle.env.gym_env.registry import list_available_environments
+from fle.env.protocols._mcp import config
 
 from fle.env.protocols._mcp.models import FactorioServer, Recipe, ResourcePatch
 from fle.env.protocols._mcp.repository import FactorioMCPRepository
@@ -37,167 +38,167 @@ class FactorioMCPState:
             int, "FactorioMCPRepository"
         ] = {}  # instance_id -> VCS repo
 
+        # The observation environment is created on first use. Building it opens
+        # an RCON connection (and in lab mode provisions the world), so importing
+        # this module must not attach to any container — that import used to be
+        # enough to reset the world the session would later be pointed at.
+        self._gym_env = None
+        self.gym_env_id = self._resolve_gym_env_id()
+
+    @property
+    def gym_env(self):
+        """Observation environment for this session, created on first use."""
+        if self._gym_env is None:
+            self._gym_env = self._make_gym_env(self.gym_env_id)
+            self._reset_gym_env()
+        return self._gym_env
+
+    @staticmethod
+    def _resolve_gym_env_id() -> str:
+        """Pick the environment that supplies observations for the session."""
         try:
             env_ids = list_available_environments()
-            # print(f"DEBUG: Available environment IDs: {env_ids}")
-            # print(f"DEBUG: Number of environments found: {len(env_ids)}")
-
             if not env_ids:
                 raise Exception("No environments found")
-
-            for id in env_ids:
-                if "open" in id:
-                    print(f"DEBUG: Using open environment: {id}")
-                    self.gym_env = gym.make(id, disable_env_checker=True, run_idx=0)
-                    self.gym_env.reset()
-                    return
-
-            # print(f"DEBUG: No open environment found, using first available: {env_ids[0]}")
-            self.gym_env = gym.make(env_ids[0], disable_env_checker=True, run_idx=0)
-
-            # program = await self.create_program_from_policy(
-            #     policy=policy,
-            #     agent_idx=agent_idx,
-            #     reward=reward,
-            #     response=obs_dict["raw_text"],
-            #     error_occurred=info["error_occurred"],
-            #     game_state=output_game_state
-            # )
-            #
-        except IndexError as e:
-            print(f"IndexError in __init__: {e}")
-            print(
-                f"env_ids length: {len(env_ids) if 'env_ids' in locals() else 'Not available'}"
-            )
-            print("Falling back to steel_plate_throughput environment")
-            self.gym_env = gym.make(
-                "steel_plate_throughput", disable_env_checker=True, run_idx=0
-            )
+            for env_id in env_ids:
+                if "open" in env_id:
+                    print(f"DEBUG: Using open environment: {env_id}")
+                    return env_id
+            return env_ids[0]
         except Exception as e:
-            print(f"Error in __init__: {e}")
-            print(f"Error type: {type(e)}")
+            print(f"Error resolving gym environment: {e}")
             print("Falling back to steel_plate_throughput environment")
-            self.gym_env = gym.make(
-                "steel_plate_throughput", disable_env_checker=True, run_idx=0
-            )
+            return "steel_plate_throughput"
 
-        self.gym_env.reset()
+    def _make_gym_env(self, env_id: str):
+        """Create the observation environment for this session.
+
+        The target pin and the provisioning switch are forwarded, so this
+        attachment obeys the same rules as the session: it never resets the
+        game unless ``FLE_RESET_ON_CONNECT`` is set, and it never attaches to a
+        different container than the session is pinned to.
+        """
+        return gym.make(
+            env_id,
+            disable_env_checker=True,
+            run_idx=0,
+            reset_on_init=config.reset_on_connect(),
+            container_name=config.server_pin_name(),
+            rcon_port=config.server_pin_rcon_port(),
+        )
+
+    def _reset_gym_env(self):
+        """Reset the observation environment — provisioning only."""
+        if config.reset_on_connect():
+            self._gym_env.reset()
+
+    def _build_instance(self, address: str, tcp_port: int) -> FactorioInstance:
+        """Attach to one server by explicit address and RCON port."""
+        instance = FactorioInstance(
+            address=address,
+            tcp_port=tcp_port,
+            bounding_box=200,
+            fast=True,
+            cache_scripts=True,
+            inventory={
+                "stone-furnace": 1,
+                "burner-mining-drill": 1,
+                "wood": 5,
+                "iron-plate": 8,
+            },
+            all_technologies_researched=False,
+            reset_on_init=config.reset_on_connect(),
+        )
+        # Ensure agent characters exist (removed one-time associate command)
+        # Check if agent characters exist, if not create them
+        char_check = instance.rcon_client.send_command(
+            "/c rcon.print(storage.agent_characters and #storage.agent_characters or 0)"
+        )
+
+        if int(char_check) == 0:
+            instance.first_namespace._create_agent_characters(1)
+
+        instance.set_speed(10)
+        return instance
 
     def create_factorio_instance(self, instance_id: int) -> FactorioInstance:
-        """Create a single Factorio instance"""
-        try:
-            ips, udp_ports, tcp_ports = get_local_container_ips()
-
-            if instance_id >= len(ips):
-                raise IndexError(
-                    f"instance_id {instance_id} out of range for ips list of length {len(ips)}"
-                )
-            if instance_id >= len(tcp_ports):
-                raise IndexError(
-                    f"instance_id {instance_id} out of range for tcp_ports list of length {len(tcp_ports)}"
-                )
-
-            instance = FactorioInstance(
-                address=ips[instance_id],
-                tcp_port=tcp_ports[instance_id],
-                bounding_box=200,
-                fast=True,
-                cache_scripts=True,
-                inventory={
-                    "stone-furnace": 1,
-                    "burner-mining-drill": 1,
-                    "wood": 5,
-                    "iron-plate": 8,
-                },
-                all_technologies_researched=False,
+        """Create a single Factorio instance for a server found by scan_for_servers"""
+        server = self.available_servers.get(instance_id)
+        if server is None:
+            raise IndexError(
+                f"instance_id {instance_id} is not among the servers found by "
+                f"scan_for_servers ({sorted(self.available_servers)})"
             )
-            # Ensure agent characters exist (removed one-time associate command)
-            # Check if agent characters exist, if not create them
-            char_check = instance.rcon_client.send_command(
-                "/c rcon.print(storage.agent_characters and #storage.agent_characters or 0)"
-            )
-
-            if int(char_check) == 0:
-                instance.first_namespace._create_agent_characters(1)
-
-            instance.set_speed(10)
-            return instance
-        except IndexError as e:
-            print(f"IndexError in create_factorio_instance: {e}")
-            try:
-                print(f"Available IPs: {ips}")
-                print(f"Available TCP ports: {tcp_ports}")
-            except NameError:
-                print("ERROR: Could not retrieve container IPs/ports")
-            raise e
-        except Exception as e:
-            print(f"Error creating Factorio instance: {e}")
-            print(f"Error type: {type(e)}")
-            raise e
+        return self._build_instance(server.address, server.tcp_port)
 
     async def scan_for_servers(self, ctx=None) -> List[FactorioServer]:
-        """Scan for running Factorio servers"""
-        try:
-            ips, udp_ports, tcp_ports = get_local_container_ips()
-            # print("scanning for servers")
-            # Create server objects for each detected instance
-            new_servers = {}
-            for i in range(len(ips)):
-                if ctx:
-                    await ctx.report_progress(i, len(ips))
+        """Scan for running Factorio servers.
 
-                instance_id = i
+        Servers are identified by their container name and published ports, not
+        by their position in the docker listing. When the target is pinned
+        (``FLE_SERVER``/``FLE_RCON_PORT``) only that container is probed, so a
+        session never opens a connection to another container merely to find out
+        whether it is alive; an unresolvable pin raises with the candidates.
+        """
+        containers = list_factorio_containers()
 
-                # Check if server already exists in our list
-                if instance_id in self.available_servers:
-                    # Update existing server
-                    server = self.available_servers[instance_id]
-                    server.last_checked = time.time()
-                    # Update address and ports in case they changed
-                    server.address = ips[i]
-                    server.tcp_port = tcp_ports[i]
+        target = None
+        if (
+            config.server_pin_name() is not None
+            or config.server_pin_rcon_port() is not None
+        ):
+            target = select_container(
+                containers,
+                name=config.server_pin_name(),
+                rcon_port=config.server_pin_rcon_port(),
+            )
 
-                    # Try to verify if it's active
-                    if (
-                        not server.is_active
-                    ):  # or time.time() - server.last_checked > 60:
-                        try:
-                            self.create_factorio_instance(i)
-                            server.is_active = True
-                        except Exception as e:
-                            server.is_active = False
-                            server.system_response = str(e)
-                            print(str(e))
+        scanned = 0
+        new_servers = {}
+        for instance_id, container in enumerate(containers):
+            if target is not None and container != target:
+                continue
 
-                    new_servers[instance_id] = server
-                else:
-                    # Create new server entry
-                    server = FactorioServer(
-                        address=ips[i],
-                        tcp_port=int(tcp_ports[i]),
-                        instance_id=instance_id,
-                        name=f"Factorio Server {i + 1}",
-                        last_checked=time.time(),
-                    )
-                    # Try to verify if it's active
-                    try:
-                        self.create_factorio_instance(i)
-                        server.is_active = True
-                    except Exception as e:
-                        server.is_active = False
-                        server.system_response = str(e)
-                        # print(e)
+            if ctx:
+                await ctx.report_progress(scanned, len(containers))
+                scanned += 1
 
-                    new_servers[instance_id] = server
+            server = self.available_servers.get(instance_id)
+            if server is None:
+                server = FactorioServer(
+                    address=container.address,
+                    tcp_port=int(container.tcp_port),
+                    udp_port=int(container.udp_port),
+                    instance_id=instance_id,
+                    name=container.name,
+                    last_checked=time.time(),
+                )
+            else:
+                server.last_checked = time.time()
+                server.address = container.address
+                server.tcp_port = int(container.tcp_port)
+                server.udp_port = int(container.udp_port)
+                server.name = container.name
 
-                    if instance_id not in self.checkpoints:
-                        self.checkpoints[instance_id] = {}
+            # Try to verify if it's active
+            if not server.is_active:
+                probe = None
+                try:
+                    probe = self._build_instance(server.address, server.tcp_port)
+                    server.is_active = True
+                except Exception as e:
+                    server.is_active = False
+                    server.system_response = str(e)
+                    print(str(e))
+                finally:
+                    if probe is not None:
+                        probe.cleanup()
 
-            self.available_servers = new_servers
-            return list(self.available_servers.values())
+            new_servers[instance_id] = server
+            self.checkpoints.setdefault(instance_id, {})
 
-        except Exception as e:
-            raise e
+        self.available_servers = new_servers
+        return list(self.available_servers.values())
 
     async def connect_to_server(self, instance_id: int) -> bool:
         """Connect to a Factorio server by instance ID"""
