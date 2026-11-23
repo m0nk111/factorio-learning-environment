@@ -1633,3 +1633,36 @@ def test_a_pin_can_name_a_secondary_rcon_binding(monkeypatch):
     pinned = select_container([container], rcon_port=27101)
     assert pinned.container_id == container.container_id
     assert pinned.tcp_port == 27101
+
+
+def test_a_secondary_port_pin_still_scans_the_pinned_container(monkeypatch):
+    """A pin resolved to a secondary binding must survive the scan loop.
+
+    The pin returns a re-addressed copy, so an equality check against the
+    discovery record skips it and the session finds no servers at all.
+    """
+    cluster, state = _install_fake_cluster(monkeypatch)
+    monkeypatch.setattr(
+        state_module,
+        "list_factorio_containers",
+        lambda: [
+            FactorioContainer(
+                name="factorio_1",
+                container_id="id-factorio_1",
+                address="127.0.0.1",
+                udp_port=35197,
+                tcp_port=27100,
+                rcon_bindings=(("127.0.0.1", 27100), ("127.0.0.1", 27101)),
+            )
+        ],
+    )
+    monkeypatch.setenv("FLE_RCON_PORT", "27101")
+    monkeypatch.delenv("FLE_SERVER", raising=False)
+    monkeypatch.delenv("FACTORIO_SERVER_PORT", raising=False)
+    monkeypatch.delenv("FACTORIO_SERVER_ADDRESS", raising=False)
+
+    servers = asyncio.run(state.scan_for_servers())
+
+    assert len(servers) == 1, "the pinned container must not be skipped"
+    assert servers[0].tcp_port == 27101
+    assert servers[0].name == "factorio_1"

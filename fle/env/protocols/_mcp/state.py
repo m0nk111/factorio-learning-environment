@@ -29,6 +29,17 @@ def _diag(message: str) -> None:
 RECIPES_PATH = Path(__file__).parent.parent / "data" / "recipes" / "recipes.jsonl"
 
 
+def _same_container(container, target) -> bool:
+    """Whether two discovery records describe the same container."""
+    target_id = getattr(target, "container_id", None)
+    if target_id is not None:
+        return getattr(container, "container_id", None) == target_id
+    return container is target or (
+        getattr(container, "name", None) == getattr(target, "name", None)
+        and getattr(container, "address", None) == getattr(target, "address", None)
+    )
+
+
 class FactorioMCPState:
     """Manages the state of the Factorio MCP server"""
 
@@ -302,8 +313,13 @@ class FactorioMCPState:
         scanned = 0
         new_servers = {}
         for instance_id, container in enumerate(containers):
-            if target is not None and container != target:
-                continue
+            if target is not None:
+                # Compare identity, not the record: a port pin can resolve to a
+                # re-addressed copy of the same container (secondary binding).
+                if not _same_container(container, target):
+                    continue
+                # Probe (and record) the endpoint the pin resolved to.
+                container = target
 
             if ctx:
                 await ctx.report_progress(scanned, len(containers))
