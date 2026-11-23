@@ -556,3 +556,22 @@ def test_discovery_diagnostics_stay_off_stdout(monkeypatch, capsys):
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "No running Factorio containers found" in captured.err
+
+
+def test_unreachable_candidate_writes_nothing_to_stdout(monkeypatch, capsys):
+    """A failing probe is a diagnostic; stdout carries the MCP protocol stream."""
+    cluster, state = _install_fake_cluster(
+        monkeypatch,
+        build=lambda self, address, tcp_port: (_ for _ in ()).throw(
+            ConnectionError("RCON refused")
+        ),
+    )
+
+    servers = asyncio.run(state.scan_for_servers())
+
+    captured = capsys.readouterr()
+    assert captured.out == "", f"probe wrote to stdout: {captured.out!r}"
+    assert "RCON refused" in captured.err
+    assert len(servers) == len(CANDIDATES)
+    assert all(not server.is_active for server in servers)
+    assert all(server.system_response for server in servers)

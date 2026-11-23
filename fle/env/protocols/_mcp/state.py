@@ -1,4 +1,5 @@
 import json
+import sys
 import time
 from pathlib import Path
 from typing import Dict, List, Optional, Any
@@ -11,6 +12,11 @@ from fle.env.protocols._mcp import config
 from fle.env.protocols._mcp.models import FactorioServer, Recipe, ResourcePatch
 from fle.env.protocols._mcp.repository import FactorioMCPRepository
 import gymnasium as gym
+
+
+def _diag(message: str) -> None:
+    """Write a diagnostic to stderr: stdout carries the MCP protocol stream."""
+    print(message, file=sys.stderr)
 
 
 class FactorioMCPState:
@@ -62,12 +68,12 @@ class FactorioMCPState:
                 raise Exception("No environments found")
             for env_id in env_ids:
                 if "open" in env_id:
-                    print(f"DEBUG: Using open environment: {env_id}")
+                    _diag(f"DEBUG: Using open environment: {env_id}")
                     return env_id
             return env_ids[0]
         except Exception as e:
-            print(f"Error resolving gym environment: {e}")
-            print("Falling back to steel_plate_throughput environment")
+            _diag(f"Error resolving gym environment: {e}")
+            _diag("Falling back to steel_plate_throughput environment")
             return "steel_plate_throughput"
 
     def _make_gym_env(self, env_id: str):
@@ -189,7 +195,9 @@ class FactorioMCPState:
                 except Exception as e:
                     server.is_active = False
                     server.system_response = str(e)
-                    print(str(e))
+                    # stderr: stdout carries the MCP protocol stream, and an
+                    # unreachable candidate must not corrupt the handshake.
+                    _diag(f"{server.name}: {e}")
                 finally:
                     if probe is not None:
                         probe.cleanup()
@@ -229,12 +237,12 @@ class FactorioMCPState:
 
             # Initialize VCS repository for this instance if it doesn't exist
             if instance_id not in self.vcs_repos:
-                print("Initializing repo")
+                _diag("Initializing repo")
                 self.vcs_repos[instance_id] = FactorioMCPRepository(instance)
 
             return True
         except Exception as e:
-            print(f"Error connecting to Factorio server: {e}")
+            _diag(f"Error connecting to Factorio server: {e}")
             return False
 
     def get_vcs(self):
@@ -302,14 +310,14 @@ class FactorioMCPState:
                                 energy_required=1.0,  # Default value as it's not in the JSONL
                             )
                         except json.JSONDecodeError:
-                            print(f"Warning: Could not parse recipe line: {line}")
+                            _diag(f"Warning: Could not parse recipe line: {line}")
                         except KeyError as e:
-                            print(f"Warning: Missing key in recipe: {e}")
+                            _diag(f"Warning: Missing key in recipe: {e}")
                         except Exception as e:
-                            print(f"Warning: Error processing recipe: {e}")
+                            _diag(f"Warning: Error processing recipe: {e}")
 
             self.recipes_loaded = True
             return recipes
         except Exception as e:
-            print(f"Error loading recipes from file: {e}")
+            _diag(f"Error loading recipes from file: {e}")
             raise e
