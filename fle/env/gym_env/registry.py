@@ -106,6 +106,7 @@ def make_factorio_env(
     reset_on_init: bool = True,
     container_name: Optional[str] = None,
     rcon_port: Optional[int] = None,
+    address: Optional[str] = None,
 ) -> FactorioGymEnv:
     """Factory function to create a Factorio gym environment.
 
@@ -132,7 +133,11 @@ def make_factorio_env(
     # Create task from the task definition
     task = TaskFactory.create_task(spec.task_config_path)
 
-    # Resolve server address (no retry — pure config)
+    # Resolve server address (no retry — pure config). ``address`` may also be
+    # passed by the caller: the attachment that already resolved its endpoint
+    # forwards it, so a container renamed (or replaced) after the attach cannot
+    # redirect the environment to a different world.
+    attached_address = address
     address = os.getenv("FACTORIO_SERVER_ADDRESS")
     tcp_port = os.getenv("FACTORIO_SERVER_PORT")
 
@@ -158,9 +163,15 @@ def make_factorio_env(
                 f"FACTORIO_SERVER_PORT={tcp_port!r} but the target pin resolves to "
                 f"{pinned.describe()}. Unset one of the two."
             )
-        address = pinned.address
-        tcp_port = pinned.tcp_port
-        print(f"Using pinned Factorio container {pinned.describe()}", file=sys.stderr)
+        # The attachment's own endpoint outranks a fresh lookup: the pin names a
+        # container, but the name can be reused by a replacement.
+        address = attached_address or pinned.address
+        tcp_port = rcon_port if rcon_port is not None else pinned.tcp_port
+        print(
+            f"Using pinned Factorio container {pinned.describe()}"
+            f" at {address}:{tcp_port}",
+            file=sys.stderr,
+        )
 
     if not address and not tcp_port:
         try:

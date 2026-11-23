@@ -107,6 +107,19 @@ class FactorioMCPState:
             )
         return (config.server_pin_name(), config.server_pin_rcon_port())
 
+    def observation_address(self):
+        """Address of the attached container, for the observation environment.
+
+        The container name is not an identity: a renamed container frees its
+        name and port for a replacement elsewhere. The session keeps the address
+        it actually attached to, so the environment reads the same world that
+        actions go to.
+        """
+        server = self.active_server
+        if server is not None:
+            return getattr(server, "address", None)
+        return None
+
     def observation_target(self):
         """World the observation environment belongs to.
 
@@ -165,6 +178,7 @@ class FactorioMCPState:
             reset_on_init=self._provision_gym_env,
             container_name=container_name,
             rcon_port=rcon_port,
+            address=self.observation_address(),
         )
 
     def _reset_gym_env(self):

@@ -36,6 +36,7 @@ import pytest
 # `import ..._mcp.state as state_module` would bind that instance instead of the
 # module; go through the import machinery to get the module itself.
 state_module = importlib.import_module("fle.env.protocols._mcp.state")
+registry_module = importlib.import_module("fle.env.gym_env.registry")
 
 from fle.commons.cluster_ips import (  # noqa: E402
     ContainerSelectionError,
@@ -1438,7 +1439,87 @@ def test_the_container_identity_matches_address_and_port(monkeypatch):
     state = FactorioMCPState()
     state.available_servers = {0: first, 1: second}
 
-    instance = state.create_factorio_instance(0)
+    # Index 1 is the one that matters: a port-only lookup matches the first
+    # record and would still pass on index 0.
+    instance = state.create_factorio_instance(1)
 
-    assert built == [("127.0.0.1", 27100)]
-    assert instance.container_name == "factorio_1"
+    assert built == [("127.0.0.2", 27100)]
+    assert instance.container_name == "factorio_2"
+
+
+def test_the_observation_env_receives_the_attached_address(monkeypatch):
+    """The environment must read the world the session is attached to.
+
+    A container that is renamed frees its name and port for a replacement on
+    another host, so rebuilding the target from the name alone can point the
+    observation environment at a different world than actions.
+    """
+    state = FactorioMCPState()
+    state.available_servers[0] = types.SimpleNamespace(
+        address="127.0.0.7", tcp_port=27100, container_name="factorio_7"
+    )
+    state.active_server = state.available_servers[0]
+
+    seen = {}
+    monkeypatch.setattr(
+        state_module,
+        "gym",
+        types.SimpleNamespace(
+            make=lambda env_id, **kwargs: seen.update(kwargs) or object()
+        ),
+    )
+    # The autouse guard replaces the method; this test needs the real one.
+    monkeypatch.setattr(FactorioMCPState, "_make_gym_env", REAL_MAKE_GYM_ENV)
+
+    state._make_gym_env("Factorio-v0")
+
+    assert seen["address"] == "127.0.0.7"
+    assert seen["container_name"] == "factorio_7"
+    assert seen["rcon_port"] == 27100
+
+
+def test_the_registry_prefers_the_attached_address(monkeypatch):
+    """A pin that resolves to a replacement container must not win."""
+    selected = FactorioContainer(
+        name="factorio_7",
+        container_id="cid",
+        address="127.0.0.9",  # what a fresh lookup would say
+        tcp_port=27100,
+        udp_port=35197,
+    )
+    monkeypatch.setattr(registry_module, "list_factorio_containers", lambda: [selected])
+    monkeypatch.delenv("FACTORIO_SERVER_ADDRESS", raising=False)
+    monkeypatch.delenv("FACTORIO_SERVER_PORT", raising=False)
+
+    captured = {}
+
+    class _Stop(Exception):
+        pass
+
+    def fake_instance(**kwargs):
+        captured.update(kwargs)
+        raise _Stop
+
+    monkeypatch.setattr(registry_module, "FactorioInstance", fake_instance)
+    monkeypatch.setattr(
+        registry_module,
+        "TaskFactory",
+        types.SimpleNamespace(create_task=lambda p: None),
+    )
+    monkeypatch.setattr(
+        registry_module, "list_available_environments", lambda: [], raising=False
+    )
+
+    # The factory wraps the build in its retry/error handler, so the sentinel
+    # surfaces as a RuntimeError; the captured kwargs are what this test checks.
+    with pytest.raises(RuntimeError):
+        registry_module.make_factorio_env(
+            types.SimpleNamespace(task_config_path=None, num_agents=1),
+            run_idx=0,
+            container_name="factorio_7",
+            rcon_port=27100,
+            address="127.0.0.7",  # the attachment's endpoint
+        )
+
+    assert captured["address"] == "127.0.0.7"
+    assert int(captured["tcp_port"]) == 27100
