@@ -1523,3 +1523,79 @@ def test_the_registry_prefers_the_attached_address(monkeypatch):
 
     assert captured["address"] == "127.0.0.7"
     assert int(captured["tcp_port"]) == 27100
+
+
+def test_a_complete_attachment_endpoint_needs_no_name_lookup(monkeypatch):
+    """A renamed container must not break observation on a live attachment.
+
+    The name is gone, so name resolution fails or matches a replacement; the
+    endpoint the session is attached to is what has to be used.
+    """
+    monkeypatch.setattr(registry_module, "list_factorio_containers", lambda: [])
+    monkeypatch.delenv("FACTORIO_SERVER_ADDRESS", raising=False)
+    monkeypatch.delenv("FACTORIO_SERVER_PORT", raising=False)
+
+    captured = {}
+
+    class _Stop(Exception):
+        pass
+
+    def fake_instance(**kwargs):
+        captured.update(kwargs)
+        raise _Stop
+
+    monkeypatch.setattr(registry_module, "FactorioInstance", fake_instance)
+    monkeypatch.setattr(
+        registry_module,
+        "TaskFactory",
+        types.SimpleNamespace(create_task=lambda p: None),
+    )
+
+    with pytest.raises(RuntimeError):
+        registry_module.make_factorio_env(
+            types.SimpleNamespace(task_config_path=None, num_agents=1),
+            run_idx=0,
+            container_name="renamed-away",
+            rcon_port=27100,
+            address="127.0.0.7",
+        )
+
+    assert captured["address"] == "127.0.0.7"
+    assert int(captured["tcp_port"]) == 27100
+
+
+def test_a_cached_environment_is_provisioned_by_a_later_opt_in(monkeypatch):
+    """Attaching twice to the same endpoint with reset turned on must provision.
+
+    The cached environment is reused, so the opt-in has to reach it instead of
+    being skipped because construction happened earlier with reset off.
+    """
+    state = FactorioMCPState()
+    state.available_servers[0] = types.SimpleNamespace(
+        address="127.0.0.7", tcp_port=27100, container_name="factorio_7"
+    )
+    state.active_server = state.available_servers[0]
+
+    resets = []
+
+    class _Env:
+        def reset(self, *args, **kwargs):
+            resets.append(True)
+            return None
+
+    monkeypatch.setattr(
+        state_module, "gym", types.SimpleNamespace(make=lambda env_id, **kw: _Env())
+    )
+    monkeypatch.setattr(FactorioMCPState, "_make_gym_env", REAL_MAKE_GYM_ENV)
+
+    monkeypatch.delenv("FLE_RESET_ON_CONNECT", raising=False)
+    state.gym_env  # first attach: safe mode, nothing provisioned
+    assert resets == []
+
+    monkeypatch.setenv("FLE_RESET_ON_CONNECT", "1")
+    state._provision_gym_env = True
+    state.gym_env  # same endpoint, now opted in
+    assert resets == [True], "the cached environment must be provisioned"
+
+    state.gym_env  # and not provisioned again on every access
+    assert resets == [True]

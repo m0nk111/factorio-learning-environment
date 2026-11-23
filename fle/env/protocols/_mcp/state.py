@@ -60,6 +60,10 @@ class FactorioMCPState:
         # enough to reset the world the session would later be pointed at.
         self._gym_env = None
         self._gym_env_target = None
+        # Whether the cached environment has already been provisioned; an
+        # environment built while provisioning was off must not silently skip a
+        # later opted-in attach.
+        self._gym_env_provisioned = False
         # Provisioning is an attach-time decision: an environment rebuilt later
         # (for instance after a failed re-attach rolled the session back) must
         # not reset the world it observes.
@@ -83,6 +87,8 @@ class FactorioMCPState:
         if self._gym_env is None:
             self._gym_env = self._make_gym_env(self.gym_env_id)
             self._gym_env_target = target
+            self._gym_env_provisioned = False
+        if not self._gym_env_provisioned:
             try:
                 self._reset_gym_env()
             except Exception:
@@ -138,6 +144,7 @@ class FactorioMCPState:
         """Drop the cached observation environment (its own RCON connection)."""
         env, self._gym_env = self._gym_env, None
         self._gym_env_target = None
+        self._gym_env_provisioned = False
         if env is None:
             return
         try:
@@ -190,6 +197,8 @@ class FactorioMCPState:
         """
         if self._provision_gym_env and config.reset_on_connect():
             self._gym_env.reset()
+            self._gym_env_provisioned = True
+        return self._gym_env_provisioned
 
     def _build_instance(self, address: str, tcp_port: int) -> FactorioInstance:
         """Attach to one server by explicit address and RCON port."""

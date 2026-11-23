@@ -150,28 +150,37 @@ def make_factorio_env(
             raise ValueError(
                 f"rcon_port must be a valid port number, got {rcon_port!r}"
             )
-        pinned = select_container(
-            list_factorio_containers(),
-            name=container_name,
-            rcon_port=None if rcon_port is None else int(rcon_port),
-        )
-        if (address and address != pinned.address) or (
-            tcp_port and int(tcp_port) != pinned.tcp_port
-        ):
-            raise RuntimeError(
-                f"Conflicting Factorio target: FACTORIO_SERVER_ADDRESS={address!r} "
-                f"FACTORIO_SERVER_PORT={tcp_port!r} but the target pin resolves to "
-                f"{pinned.describe()}. Unset one of the two."
+        if attached_address is not None and rcon_port is not None:
+            # A complete endpoint from the attachment needs no name resolution:
+            # the container may have been renamed meanwhile, in which case a
+            # lookup would fail (or match a replacement) while the session is
+            # still perfectly connected.
+            address, tcp_port = attached_address, int(rcon_port)
+            print(
+                f"Using attached Factorio container {address}:{tcp_port}",
+                file=sys.stderr,
             )
-        # The attachment's own endpoint outranks a fresh lookup: the pin names a
-        # container, but the name can be reused by a replacement.
-        address = attached_address or pinned.address
-        tcp_port = rcon_port if rcon_port is not None else pinned.tcp_port
-        print(
-            f"Using pinned Factorio container {pinned.describe()}"
-            f" at {address}:{tcp_port}",
-            file=sys.stderr,
-        )
+        else:
+            pinned = select_container(
+                list_factorio_containers(),
+                name=container_name,
+                rcon_port=None if rcon_port is None else int(rcon_port),
+            )
+            if (address and address != pinned.address) or (
+                tcp_port and int(tcp_port) != pinned.tcp_port
+            ):
+                raise RuntimeError(
+                    f"Conflicting Factorio target: FACTORIO_SERVER_ADDRESS={address!r} "
+                    f"FACTORIO_SERVER_PORT={tcp_port!r} but the target pin resolves to "
+                    f"{pinned.describe()}. Unset one of the two."
+                )
+            address = pinned.address
+            tcp_port = rcon_port if rcon_port is not None else pinned.tcp_port
+            print(
+                f"Using pinned Factorio container {pinned.describe()}"
+                f" at {address}:{tcp_port}",
+                file=sys.stderr,
+            )
 
     if not address and not tcp_port:
         try:
