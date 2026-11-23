@@ -1666,3 +1666,40 @@ def test_a_secondary_port_pin_still_scans_the_pinned_container(monkeypatch):
     assert len(servers) == 1, "the pinned container must not be skipped"
     assert servers[0].tcp_port == 27101
     assert servers[0].name == "factorio_1"
+
+
+def test_a_failing_probe_cleanup_does_not_abort_the_scan(monkeypatch):
+    """A reachable candidate must survive its own cleanup failing."""
+    monkeypatch.setattr(
+        state_module,
+        "list_factorio_containers",
+        lambda: [
+            FactorioContainer(
+                name="factorio_1",
+                container_id="id-factorio_1",
+                address="127.0.0.1",
+                udp_port=35197,
+                tcp_port=27100,
+            )
+        ],
+    )
+    monkeypatch.delenv("FLE_SERVER", raising=False)
+    monkeypatch.delenv("FLE_RCON_PORT", raising=False)
+    monkeypatch.delenv("FACTORIO_SERVER_PORT", raising=False)
+    monkeypatch.delenv("FACTORIO_SERVER_ADDRESS", raising=False)
+
+    class _ProbeThatFailsOnClose:
+        def cleanup(self):
+            raise RuntimeError("cleanup lost the socket")
+
+    state = FactorioMCPState()
+    monkeypatch.setattr(
+        state,
+        "_build_instance",
+        lambda address, tcp_port: _ProbeThatFailsOnClose(),
+    )
+
+    servers = asyncio.run(state.scan_for_servers())
+
+    assert len(servers) == 1
+    assert servers[0].is_active is True, "the probe succeeded; cleanup must not undo it"

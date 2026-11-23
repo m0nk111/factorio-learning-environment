@@ -356,7 +356,12 @@ class FactorioMCPState:
                     _diag(f"{server.name}: {e}")
                 finally:
                     if probe is not None:
-                        probe.cleanup()
+                        try:
+                            probe.cleanup()
+                        except Exception as e:  # noqa: BLE001
+                            # A failed cleanup must not abort the scan: the
+                            # candidate itself may be perfectly reachable.
+                            _diag(f"{server.name}: probe cleanup failed: {e}")
 
             new_servers[instance_id] = server
             self.checkpoints.setdefault(instance_id, {})
