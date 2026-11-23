@@ -872,3 +872,70 @@ def test_a_failed_provisioning_is_not_cached(monkeypatch):
     env = state.gym_env  # retries and succeeds
     assert env is built[-1]
     assert len(built) == 2
+
+
+def test_a_failed_attach_rolls_back_the_connection(monkeypatch):
+    """A failed attach must not leave a live connection or a connected flag.
+
+    Regression for the lab-mode path: building the observation environment can
+    raise after the RCON connection is already up, and the caller used to get
+    False while ``active_server`` and ``server.connected`` stayed set.
+    """
+
+    cleaned = []
+
+    class _FakeInstance:
+        def cleanup(self):
+            cleaned.append("cleanup")
+
+    server = state_module.FactorioServer(
+        address="127.0.0.1", tcp_port=27200, instance_id=1, name="srv", is_active=True
+    )
+    state = FactorioMCPState()
+    state.available_servers = {1: server}
+
+    monkeypatch.setattr(
+        state, "create_factorio_instance", lambda instance_id: _FakeInstance()
+    )
+
+    async def failing_provisioning(instance_id):
+        raise RuntimeError("observation environment failed")
+
+    monkeypatch.setattr(state, "refresh_game_data", failing_provisioning)
+
+    assert asyncio.run(state.connect_to_server(1)) is False
+    assert state.active_server is None
+    assert server.connected is False
+    assert cleaned == ["cleanup"]
+
+
+def test_a_failed_attach_keeps_the_previous_attachment(monkeypatch):
+    """A failed re-attach must leave an existing attachment untouched."""
+
+    cleaned = []
+    previous = _RecordingInstance(name="previous")
+
+    class _FakeInstance:
+        def cleanup(self):
+            cleaned.append("cleanup")
+
+    server = state_module.FactorioServer(
+        address="127.0.0.1", tcp_port=27300, instance_id=2, name="srv2", is_active=True
+    )
+    state = FactorioMCPState()
+    state.available_servers = {2: server}
+    state.active_server = previous
+
+    monkeypatch.setattr(
+        state, "create_factorio_instance", lambda instance_id: _FakeInstance()
+    )
+
+    async def failing_provisioning(instance_id):
+        raise RuntimeError("observation environment failed")
+
+    monkeypatch.setattr(state, "refresh_game_data", failing_provisioning)
+
+    assert asyncio.run(state.connect_to_server(2)) is False
+    assert state.active_server is previous
+    assert server.connected is False
+    assert cleaned == ["cleanup"]

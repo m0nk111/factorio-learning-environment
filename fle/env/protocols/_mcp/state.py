@@ -256,6 +256,12 @@ class FactorioMCPState:
         if not server.is_active:
             return False
 
+        # An attach can fail after the RCON connection is already up (for example
+        # when the observation environment raises in lab mode). Keep the previous
+        # attachment so a failed attempt leaves the session exactly as it was.
+        previous_active_server = self.active_server
+        instance = None
+
         try:
             # Create an instance to the server
             instance = self.create_factorio_instance(instance_id)
@@ -286,6 +292,15 @@ class FactorioMCPState:
             return True
         except Exception as e:
             _diag(f"Error connecting to Factorio server: {e}")
+            # Roll the attach back: a caller that sees False must not be left with
+            # a live RCON connection or a server marked as connected.
+            self.active_server = previous_active_server
+            server.connected = False
+            if instance is not None:
+                try:
+                    instance.cleanup()
+                except Exception as cleanup_error:
+                    _diag(f"Cleaning up the failed attach failed: {cleanup_error}")
             return False
 
     def get_vcs(self):
