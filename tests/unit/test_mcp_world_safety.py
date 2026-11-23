@@ -23,8 +23,11 @@ RCON connection is opened, and the container scan is replaced with a fake.
 import asyncio
 import importlib
 import json
+import subprocess
+import sys
 import types
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import List
 
 import pytest
@@ -215,8 +218,36 @@ def test_provisioning_defaults_to_off_and_rejects_garbage(monkeypatch):
 
 
 def test_importing_the_session_module_does_not_build_a_live_env():
-    """The import used to construct a gym env, which attached and reset a world."""
-    assert session_module.state._gym_env is None
+    """Importing the MCP module must not attach to (or reset) any world.
+
+    Checked in a fresh interpreter: in-process assertions are order-dependent,
+    because other tests in this module legitimately clear the shared state.
+    """
+    repo_root = Path(__file__).resolve().parents[2]
+    probe = """
+import gymnasium
+
+def explode(*args, **kwargs):
+    raise AssertionError("import built a live gym environment")
+
+gymnasium.make = explode
+
+import fle.env.protocols._mcp  # noqa: F401
+
+print("IMPORT_OK")
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, (
+        "importing fle.env.protocols._mcp failed or built a live environment:\n"
+        f"{result.stdout}\n{result.stderr}"
+    )
+    assert "IMPORT_OK" in result.stdout
 
 
 # --------------------------------------------------------------------------
