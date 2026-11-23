@@ -1,11 +1,70 @@
+import time
+from typing import Dict, List, Optional
+
 from mcp.server.fastmcp import Image
 from mcp.types import ImageContent
 
+from fle.commons.cluster_ips import get_local_container_ips
 from fle.env.entities import Position
 from fle.commons.models.game_state import GameState
 
-from fle.env.protocols._mcp.init import state, initialize_session
+from fle.env.protocols._mcp.models import FactorioServer
+from fle.env.protocols._mcp.init import log_info, state, initialize_session
 from fle.env.protocols._mcp import mcp
+
+
+# ============== CONNECTION HELPERS ==============
+
+
+def is_lost_rcon_connection(instance, error: BaseException) -> bool:
+    """Whether `error` means the RCON socket died instead of the code being wrong."""
+    if isinstance(error, TimeoutError):
+        # Submitted code ran out of time; the socket is usually still fine and a
+        # retry would only repeat the same slow failure.
+        return False
+    if isinstance(error, ConnectionError):
+        return True
+    is_connected = getattr(instance, "is_rcon_connected", None)
+    return callable(is_connected) and not is_connected()
+
+
+def discover_servers() -> Dict[int, FactorioServer]:
+    """Rebuild the server table from the Factorio containers running right now."""
+    ips, _udp_ports, tcp_ports = get_local_container_ips()
+    return {
+        server_id: FactorioServer(
+            address=address,
+            tcp_port=int(tcp_port),
+            instance_id=server_id,
+            name=f"Factorio Server {server_id + 1}",
+            last_checked=time.time(),
+        )
+        for server_id, (address, tcp_port) in enumerate(zip(ips, tcp_ports))
+    }
+
+
+def close_rcon_client(instance) -> None:
+    """Release the RCON socket held by `instance`, ignoring already-dead sockets."""
+    close = getattr(getattr(instance, "rcon_client", None), "close", None)
+    if not callable(close):
+        return
+
+    try:
+        close()
+    except Exception as error:
+        log_info(f"Ignoring error while closing the stale RCON client: {error}")
+
+
+def previous_server_id() -> Optional[int]:
+    """Instance id of the server this session is attached to, when it is known."""
+    active_server = state.active_server
+    if active_server is None:
+        return None
+
+    for server_id, server in state.available_servers.items():
+        if server.tcp_port == active_server.tcp_port:
+            return server_id
+    return None
 
 
 #
@@ -60,7 +119,25 @@ async def execute(code: str) -> str:
     instance = state.active_server
 
     # Execute the code
-    result, score, response = instance.eval(code, timeout=60)
+    try:
+        result, score, response = instance.eval(code, timeout=60)
+    except Exception as error:
+        if not is_lost_rcon_connection(instance, error):
+            raise
+        # The socket behind this session is gone (typically because the container
+        # was recreated on new host ports): re-discover once and retry this code.
+        log_info(
+            f"RCON connection lost ({type(error).__name__}: {error}); "
+            "re-discovering Factorio containers and retrying once"
+        )
+        reconnect_report = await reconnect()
+        if state.active_server is None or state.active_server is instance:
+            raise Exception(
+                f"Execution failed: {error}\nReconnect failed: {reconnect_report}"
+            ) from error
+        instance = state.active_server
+        vcs = state.get_vcs()
+        result, score, response = instance.eval(code, timeout=60)
 
     # Automatically commit the successful state
     current_state = GameState.from_instance(instance)
@@ -112,19 +189,70 @@ async def execute(code: str) -> str:
 async def reconnect() -> str:
     """
     Reconnect with the Factorio server
-    """
-    if not state.active_server:
-        return await initialize_session(None)
 
-    server_id = state.active_server.tcp_port
-    if server_id in state.available_servers:
-        server = state.available_servers[server_id]
+    Re-discovers the running Factorio containers, closes the RCON client this
+    session holds and opens a fresh one at the endpoint the containers publish
+    right now, so a session survives its container being recreated on different
+    host ports.
+    """
+    attached_server_id = previous_server_id()
+
+    try:
+        servers = discover_servers()
+    except Exception as error:
+        return (
+            "Reconnect failed: could not list the running Factorio containers "
+            f"({type(error).__name__}: {error}). Check that Docker is reachable, "
+            "start a container with `python fle/run.py cluster start -n 1` and call "
+            "`reconnect` again."
+        )
+
+    if not servers:
+        return (
+            "Reconnect failed: no running Factorio container found. Start one with "
+            "`python fle/run.py cluster start -n 1`, then call `reconnect` again."
+        )
+
+    close_rcon_client(state.active_server)
+    state.active_server = None
+    state.available_servers = servers
+
+    # Retry the server the session was attached to first, then any other container
+    # that discovery reported.
+    server_ids: List[int] = sorted(servers)
+    if attached_server_id in servers:
+        server_ids.remove(attached_server_id)
+        server_ids.insert(0, attached_server_id)
+
+    failures = []
+    for server_id in server_ids:
+        server = servers[server_id]
+        try:
+            instance = state.create_factorio_instance(
+                server_id, address=server.address, tcp_port=server.tcp_port
+            )
+        except Exception as error:
+            failures.append(f"{server.address}:{server.tcp_port} ({error})")
+            continue
+
+        server.connected = True
+        server.is_active = True
+        state.active_server = instance
+
         vcs = state.get_vcs()
         commits = len(vcs.undo_stack) if vcs else 0
 
         return (
-            f"Connected to Factorio server: {server.name} ({server.address}:{server.tcp_port})\n"
+            f"Connected to Factorio server: {server.name} "
+            f"({instance.address}:{instance.tcp_port})\n"
             f"Commit history: {commits} commits"
         )
-    else:
-        return "Connected to Factorio server"
+
+    discovered = ", ".join(
+        f"{server.address}:{server.tcp_port}" for server in servers.values()
+    )
+    return (
+        f"Reconnect failed: discovered {discovered} but none answered RCON "
+        f"({'; '.join(failures)}). Check the container (`docker logs <container>`) "
+        "and call `reconnect` again."
+    )
