@@ -83,23 +83,35 @@ class FactorioMCPState:
 
         self.gym_env.reset()
 
-    def create_factorio_instance(self, instance_id: int) -> FactorioInstance:
-        """Create a single Factorio instance"""
-        try:
-            ips, udp_ports, tcp_ports = get_local_container_ips()
+    def create_factorio_instance(
+        self,
+        instance_id: int,
+        address: Optional[str] = None,
+        tcp_port: Optional[int] = None,
+    ) -> FactorioInstance:
+        """Create a single Factorio instance
 
-            if instance_id >= len(ips):
-                raise IndexError(
-                    f"instance_id {instance_id} out of range for ips list of length {len(ips)}"
-                )
-            if instance_id >= len(tcp_ports):
-                raise IndexError(
-                    f"instance_id {instance_id} out of range for tcp_ports list of length {len(tcp_ports)}"
-                )
+        The endpoint is looked up with a fresh container discovery unless an
+        explicit `address`/`tcp_port` is passed, so a caller that already
+        discovered the live endpoint (e.g. a reconnect) can reuse it.
+        """
+        try:
+            if address is None or tcp_port is None:
+                ips, udp_ports, tcp_ports = get_local_container_ips()
+
+                if instance_id >= len(ips):
+                    raise IndexError(
+                        f"instance_id {instance_id} out of range for ips list of length {len(ips)}"
+                    )
+                if instance_id >= len(tcp_ports):
+                    raise IndexError(
+                        f"instance_id {instance_id} out of range for tcp_ports list of length {len(tcp_ports)}"
+                    )
+                address, tcp_port = ips[instance_id], tcp_ports[instance_id]
 
             instance = FactorioInstance(
-                address=ips[instance_id],
-                tcp_port=tcp_ports[instance_id],
+                address=address,
+                tcp_port=tcp_port,
                 bounding_box=200,
                 fast=True,
                 cache_scripts=True,
