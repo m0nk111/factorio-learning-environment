@@ -941,7 +941,7 @@ def test_a_failed_attach_keeps_the_previous_attachment(monkeypatch):
     assert cleaned == ["cleanup"]
 
 
-def test_a_missing_recipe_dump_does_not_fail_the_attach():
+def test_a_missing_recipe_dump_does_not_fail_the_attach(tmp_path, monkeypatch):
     """The recipe dump is generated data; its absence must not break a session.
 
     It used to raise FileNotFoundError through ``connect_to_server`` (after the
@@ -949,13 +949,14 @@ def test_a_missing_recipe_dump_does_not_fail_the_attach():
     its fallback pointed at a macOS path belonging to the upstream author.
     """
 
+    monkeypatch.setattr(state_module, "RECIPES_PATH", tmp_path / "recipes.jsonl")
     state = FactorioMCPState()
 
     assert state.load_recipes_from_file() == {}
     assert state.recipes == {}
 
 
-def test_the_attach_survives_a_missing_recipe_dump(monkeypatch):
+def test_the_attach_survives_a_missing_recipe_dump(tmp_path, monkeypatch):
     """An otherwise healthy attach must succeed without a recipe dump."""
 
     instance = _RecordingInstance(name="srv")
@@ -966,6 +967,7 @@ def test_the_attach_survives_a_missing_recipe_dump(monkeypatch):
     state = FactorioMCPState()
     state.available_servers = {1: server}
 
+    monkeypatch.setattr(state_module, "RECIPES_PATH", tmp_path / "recipes.jsonl")
     monkeypatch.setattr(state, "create_factorio_instance", lambda instance_id: instance)
 
     async def refreshes(instance_id):
@@ -980,3 +982,65 @@ def test_the_attach_survives_a_missing_recipe_dump(monkeypatch):
     assert state.active_server is instance
     assert server.connected is True
     assert state.recipes == {}
+
+
+def test_a_failed_attach_discards_its_observation_env(tmp_path, monkeypatch):
+    """An observation environment built during a failed attach must not stay cached."""
+
+    events = []
+
+    class _FakeEnv:
+        def reset(self, *args, **kwargs):
+            events.append("reset")
+
+        def close(self):
+            events.append("close")
+
+    instance = _RecordingInstance(name="srv")
+    server = state_module.FactorioServer(
+        address="127.0.0.1", tcp_port=27200, instance_id=1, name="srv", is_active=True
+    )
+    state = FactorioMCPState()
+    state.available_servers = {1: server}
+
+    monkeypatch.setenv("FLE_RESET_ON_CONNECT", "1")
+    monkeypatch.setattr(state_module, "RECIPES_PATH", tmp_path / "recipes.jsonl")
+    monkeypatch.setattr(state, "create_factorio_instance", lambda instance_id: instance)
+    monkeypatch.setattr(state, "_make_gym_env", lambda env_id: _FakeEnv())
+
+    async def refreshes(instance_id):
+        return None
+
+    monkeypatch.setattr(state, "refresh_game_data", refreshes)
+    monkeypatch.setattr(
+        state,
+        "load_recipes_from_file",
+        lambda: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+
+    assert asyncio.run(state.connect_to_server(1)) is False
+    assert "reset" in events and "close" in events
+    assert state._gym_env is None
+
+
+def test_a_failed_reattach_keeps_the_previous_connected_flag(monkeypatch):
+    """The rollback must not clear a connection that was already established."""
+
+    server = state_module.FactorioServer(
+        address="127.0.0.1", tcp_port=27200, instance_id=1, name="srv", is_active=True
+    )
+    server.connected = True
+    previous = _RecordingInstance(name="previous")
+
+    state = FactorioMCPState()
+    state.available_servers = {1: server}
+    state.active_server = previous
+
+    def failing_factory(instance_id):
+        raise RuntimeError("cannot build the instance")
+
+    monkeypatch.setattr(state, "create_factorio_instance", failing_factory)
+
+    assert asyncio.run(state.connect_to_server(1)) is False
+    assert server.connected is True
+    assert state.active_server is previous

@@ -23,6 +23,11 @@ def _diag(message: str) -> None:
     print(message, file=sys.stderr)
 
 
+# Generated, gitignored recipe dump. Kept as a module constant so tests can point
+# the loader at a known path instead of depending on local generated data.
+RECIPES_PATH = Path(__file__).parent.parent / "data" / "recipes" / "recipes.jsonl"
+
+
 class FactorioMCPState:
     """Manages the state of the Factorio MCP server"""
 
@@ -260,6 +265,8 @@ class FactorioMCPState:
         # when the observation environment raises in lab mode). Keep the previous
         # attachment so a failed attempt leaves the session exactly as it was.
         previous_active_server = self.active_server
+        was_connected = getattr(server, "connected", False)
+        had_gym_env = self._gym_env is not None
         instance = None
 
         try:
@@ -295,7 +302,11 @@ class FactorioMCPState:
             # Roll the attach back: a caller that sees False must not be left with
             # a live RCON connection or a server marked as connected.
             self.active_server = previous_active_server
-            server.connected = False
+            server.connected = was_connected
+            if not had_gym_env and self._gym_env is not None:
+                # Lab mode built an observation environment during this attempt;
+                # it holds its own RCON connection and must not stay cached.
+                self.close_gym_env()
             if instance is not None:
                 try:
                     instance.cleanup()
@@ -327,9 +338,7 @@ class FactorioMCPState:
         if self.recipes_loaded:
             return self.recipes
 
-        recipes_path = (
-            Path(__file__).parent.parent / "data" / "recipes" / "recipes.jsonl"
-        )
+        recipes_path = RECIPES_PATH
 
         if not recipes_path.exists():
             # The recipe dump is generated data (gitignored), so it can legitimately
