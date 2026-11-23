@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 from dataclasses import dataclass, asdict
 from typing import Any, Dict, List, Optional
@@ -135,13 +136,24 @@ def make_factorio_env(
     address = os.getenv("FACTORIO_SERVER_ADDRESS")
     tcp_port = os.getenv("FACTORIO_SERVER_PORT")
 
-    if not address and not tcp_port and (container_name or rcon_port):
+    if container_name or rcon_port:
+        # An explicit pin is authoritative: it must not be silently overridden by
+        # FACTORIO_SERVER_ADDRESS/PORT, or a provisioning run would reset a world
+        # the caller did not select.
         pinned = select_container(
             list_factorio_containers(), name=container_name, rcon_port=rcon_port
         )
+        if (address and address != pinned.address) or (
+            tcp_port and int(tcp_port) != pinned.tcp_port
+        ):
+            raise RuntimeError(
+                f"Conflicting Factorio target: FACTORIO_SERVER_ADDRESS={address!r} "
+                f"FACTORIO_SERVER_PORT={tcp_port!r} but the target pin resolves to "
+                f"{pinned.describe()}. Unset one of the two."
+            )
         address = pinned.address
         tcp_port = pinned.tcp_port
-        print(f"Using pinned Factorio container {pinned.describe()}")
+        print(f"Using pinned Factorio container {pinned.describe()}", file=sys.stderr)
 
     if not address and not tcp_port:
         try:

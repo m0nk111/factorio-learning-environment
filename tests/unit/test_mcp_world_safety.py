@@ -22,6 +22,7 @@ RCON connection is opened, and the container scan is replaced with a fake.
 
 import asyncio
 import importlib
+import types
 from dataclasses import dataclass, field
 from typing import List
 
@@ -317,7 +318,241 @@ def test_published_port_prefers_the_rcon_binding():
     }
     assert _published_port(ports, "tcp", 27015) == 27150
     assert _published_port(ports, "udp", 34197) == 35250
-    # A second TCP binding must not be able to hijack the RCON port.
-    ports["9999/tcp"] = [{"HostPort": "1"}]
-    assert _published_port(ports, "tcp", 27150) == 27150
+
+    # An unrelated TCP binding listed first must not hijack the RCON port, and
+    # the preferred port is the container-internal one, not the host port.
+    decoy_first = {
+        "9999/tcp": [{"HostPort": "1"}],
+        "27015/tcp": [{"HostPort": "27150"}],
+    }
+    assert list(decoy_first)[0] == "9999/tcp"
+    assert _published_port(decoy_first, "tcp", 27015) == 27150
+    assert _published_port(decoy_first, "tcp", 27016) == 1  # fallback, first binding
     assert _published_port({}, "tcp", 27015) is None
+
+
+# --------------------------------------------------------------------------
+# Review findings: cleanup survives a bad config, and the attach path itself is
+# covered (not just the selection around it)
+# --------------------------------------------------------------------------
+
+
+def test_shutdown_cleans_up_when_the_reset_flag_is_invalid(monkeypatch):
+    monkeypatch.setenv("FLE_RESET_ON_SHUTDOWN", "sometimes")
+    server = _RecordingInstance()
+    session_module.state.active_server = server
+    session_module.state.vcs_repos = {0: object()}
+
+    asyncio.run(session_module.shutdown_session())
+
+    assert server.calls == ["cleanup"], "the connection must still be closed"
+    assert session_module.state.active_server is None
+    assert session_module.state.vcs_repos == {}
+
+
+def test_shutdown_closes_rcon_when_the_reset_raises(monkeypatch):
+    monkeypatch.setenv("FLE_RESET_ON_SHUTDOWN", "1")
+
+    class ResetFails(_RecordingInstance):
+        def reset(self, *args, **kwargs):
+            self.calls.append("reset")
+            raise ConnectionError("RCON died mid-reset")
+
+    server = ResetFails()
+    session_module.state.active_server = server
+    session_module.state.vcs_repos = {}
+
+    asyncio.run(session_module.shutdown_session())
+
+    assert server.calls == ["reset", "cleanup"]
+
+
+def test_attach_uses_config_for_reset_on_init(monkeypatch):
+    """The real attach helper must not provision the world by default."""
+    captured = {}
+
+    class _FakeInstance:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+            self.rcon_client = types.SimpleNamespace(
+                send_command=lambda command: "1"  # agents already exist
+            )
+            self.first_namespace = types.SimpleNamespace(
+                _create_agent_characters=lambda n: captured.setdefault("chars", n)
+            )
+
+        def set_speed(self, speed):
+            captured["speed"] = speed
+
+    monkeypatch.setattr(state_module, "FactorioInstance", _FakeInstance)
+    state = FactorioMCPState()
+
+    state._build_instance("127.0.0.1", 27100)
+    assert captured["reset_on_init"] is False
+    assert captured["tcp_port"] == 27100
+
+    monkeypatch.setenv("FLE_RESET_ON_CONNECT", "1")
+    state._build_instance("127.0.0.1", 27100)
+    assert captured["reset_on_init"] is True
+
+
+def test_initialise_skips_every_provisioning_step(monkeypatch):
+    """FactorioInstance.initialise(reset_on_init=False) must only load Lua."""
+    from fle.env.instance import FactorioInstance
+
+    calls = []
+
+    class _Namespace:
+        def _create_agent_characters(self, num):
+            calls.append("characters")
+
+        def _reset(self, *args, **kwargs):
+            calls.append("reset")
+
+        def _clear_collision_boxes(self):
+            calls.append("collision_boxes")
+
+    class _Rcon:
+        def send_command(self, command):
+            if "remove_enemies" in command:
+                calls.append("remove_enemies")
+            return ""
+
+    class _Lua:
+        def load_init_into_game(self, name):
+            calls.append(f"lua:{name}")
+
+    def build(reset_on_init):
+        instance = object.__new__(FactorioInstance)
+        instance.reset_on_init = reset_on_init
+        instance.peaceful = True
+        instance.num_agents = 1
+        instance.initial_inventory = {}
+        instance.namespaces = [_Namespace()]
+        instance.rcon_client = _Rcon()
+        instance.lua_script_manager = _Lua()
+        instance._generate_chunks = lambda **kwargs: calls.append("chunks")
+        return instance
+
+    calls.clear()
+    build(reset_on_init=False).initialise()
+    assert "reset" not in calls
+    assert "chunks" not in calls
+    assert "remove_enemies" not in calls
+    assert "characters" not in calls
+    assert any(call.startswith("lua:") for call in calls), "the Lua layer still loads"
+
+    calls.clear()
+    build(reset_on_init=True).initialise()
+    assert {"reset", "chunks", "remove_enemies", "characters"} <= set(calls)
+
+
+def _gym_spec():
+    from fle.env.gym_env import registry as registry_module
+
+    return registry_module, registry_module.GymEnvironmentSpec(
+        task_key="open_play",
+        task_config_path="open_play",
+        description="unit-test spec",
+        num_agents=1,
+    )
+
+
+def test_make_factorio_env_skips_task_setup_unless_provisioning(monkeypatch):
+    registry_module, spec = _gym_spec()
+    setup_calls = []
+    built = {}
+
+    class _Task:
+        def setup(self, instance):
+            setup_calls.append(instance)
+
+    class _Env:
+        def __init__(self, instance, task, enable_vision):
+            built["wrapped"] = True
+
+    class _Instance:
+        def __init__(self, **kwargs):
+            built["kwargs"] = kwargs
+
+        def set_speed_and_unpause(self, speed):
+            built["speed"] = speed
+
+    monkeypatch.setattr(
+        registry_module,
+        "TaskFactory",
+        types.SimpleNamespace(create_task=lambda path: _Task()),
+    )
+    monkeypatch.setattr(registry_module, "FactorioInstance", _Instance)
+    monkeypatch.setattr(registry_module, "FactorioGymEnv", _Env)
+    monkeypatch.setenv("FACTORIO_SERVER_ADDRESS", "127.0.0.1")
+    monkeypatch.setenv("FACTORIO_SERVER_PORT", "27100")
+
+    registry_module.make_factorio_env(spec, 0, reset_on_init=False)
+    assert setup_calls == [], "task.setup resets the world; it must be skipped"
+    assert built["kwargs"]["reset_on_init"] is False
+
+    registry_module.make_factorio_env(spec, 0)
+    assert len(setup_calls) == 1
+    assert built["kwargs"]["reset_on_init"] is True
+
+
+def _fake_containers():
+    return [
+        FactorioContainer("factorio_1", "id1", "127.0.0.1", 35197, 27100),
+        FactorioContainer("factorio_2", "id2", "127.0.0.1", 35198, 27101),
+    ]
+
+
+def test_pin_wins_over_an_explicit_target_and_conflicts_loudly(monkeypatch):
+    registry_module, spec = _gym_spec()
+    built = {}
+
+    class _Instance:
+        def __init__(self, **kwargs):
+            built["kwargs"] = kwargs
+
+        def set_speed_and_unpause(self, speed):
+            pass
+
+    class _Task:
+        def setup(self, instance):
+            pass
+
+    monkeypatch.setattr(registry_module, "list_factorio_containers", _fake_containers)
+    monkeypatch.setattr(registry_module, "FactorioInstance", _Instance)
+    monkeypatch.setattr(registry_module, "FactorioGymEnv", lambda **kwargs: object())
+    monkeypatch.setattr(
+        registry_module,
+        "TaskFactory",
+        types.SimpleNamespace(create_task=lambda path: _Task()),
+    )
+
+    # A pin resolving to factorio_2 must be used, not the explicit target.
+    monkeypatch.setenv("FACTORIO_SERVER_ADDRESS", "127.0.0.1")
+    monkeypatch.setenv("FACTORIO_SERVER_PORT", "27101")
+    registry_module.make_factorio_env(spec, 0, container_name="factorio_2")
+    assert built["kwargs"]["tcp_port"] == 27101
+
+    # ... and a pin that contradicts the explicit target must be rejected.
+    monkeypatch.setenv("FACTORIO_SERVER_PORT", "27100")
+    with pytest.raises(RuntimeError, match="Conflicting Factorio target"):
+        registry_module.make_factorio_env(spec, 0, container_name="factorio_2")
+
+
+def test_discovery_diagnostics_stay_off_stdout(monkeypatch, capsys):
+    """stdout carries the MCP protocol stream; diagnostics must go to stderr."""
+    from fle.commons import cluster_ips
+
+    monkeypatch.setattr(
+        cluster_ips.subprocess,
+        "run",
+        lambda *args, **kwargs: types.SimpleNamespace(
+            stdout="", stderr="", returncode=0
+        ),
+    )
+
+    assert cluster_ips.list_factorio_containers() == []
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "No running Factorio containers found" in captured.err

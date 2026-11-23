@@ -103,24 +103,28 @@ async def shutdown_session():
     lab behaviour is opt-in through ``FLE_RESET_ON_SHUTDOWN=1``.
     """
     # Close any active connections
-    if state.active_server:
-        server = state.active_server
-        state.active_server = None
+    server = state.active_server
+    state.active_server = None
+    try:
+        if server is None:
+            return
         log_info("Disconnecting from Factorio server...")
 
-        if config.reset_on_shutdown():
-            log_info(
-                "FLE_RESET_ON_SHUTDOWN is set: resetting the game state on shutdown"
-            )
-            try:
-                server.reset()
-            except Exception as e:
-                log_info(f"Reset on shutdown failed: {e}")
-
         try:
-            server.cleanup()
+            if config.reset_on_shutdown():
+                log_info(
+                    "FLE_RESET_ON_SHUTDOWN is set: resetting the game state on shutdown"
+                )
+                server.reset()
         except Exception as e:
-            log_info(f"Closing the RCON connection failed: {e}")
-
-    # Clear any temporary state
-    state.vcs_repos.clear()
+            # Includes an invalid FLE_RESET_ON_SHUTDOWN value: report it, but the
+            # connection must still be closed.
+            log_info(f"Reset on shutdown failed: {e}")
+        finally:
+            try:
+                server.cleanup()
+            except Exception as e:
+                log_info(f"Closing the RCON connection failed: {e}")
+    finally:
+        # Clear any temporary state
+        state.vcs_repos.clear()

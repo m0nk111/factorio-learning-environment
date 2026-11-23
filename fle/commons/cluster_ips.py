@@ -13,6 +13,7 @@ or fails loudly with the candidates listed.
 
 import json
 import subprocess
+import sys
 from dataclasses import dataclass
 from typing import Iterable, List, Optional, Sequence
 
@@ -75,7 +76,7 @@ def list_factorio_containers() -> List[FactorioContainer]:
     container_ids = [c for c in container_ids if c]
 
     if not container_ids:
-        print("No running Factorio containers found")
+        print("No running Factorio containers found", file=sys.stderr)
         return []
 
     containers = []
@@ -89,7 +90,10 @@ def list_factorio_containers() -> List[FactorioContainer]:
         tcp_port = _published_port(ports, "tcp", INTERNAL_RCON_PORT)
         if udp_port is None or tcp_port is None:
             # Not a game server we can talk to (no published game or RCON port).
-            print(f"Skipping container {container_id}: no published game/RCON port")
+            print(
+                f"Skipping container {container_id}: no published game/RCON port",
+                file=sys.stderr,
+            )
             continue
         containers.append(
             FactorioContainer(
