@@ -720,18 +720,20 @@ def test_observation_env_does_not_outlive_its_target(monkeypatch):
 
 
 def test_shutdown_closes_the_observation_environment():
-    state = session_module.state
-    state._gym_env = types.SimpleNamespace(closed=False)
+    closed = []
 
     class _Env:
         def close(self):
-            state._gym_env.closed = True
+            closed.append(True)
 
-    state._gym_env = _Env()
+    session_module.state._gym_env = _Env()
     session_module.state.active_server = None
+
     asyncio.run(session_module.shutdown_session())
 
     assert session_module.state._gym_env is None
+    # Not merely dropped: close() must actually be called on the cached env.
+    assert closed == [True]
 
 
 def test_lab_mode_builds_the_observation_env_at_connect_time(monkeypatch):
