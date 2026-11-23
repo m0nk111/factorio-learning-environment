@@ -125,12 +125,11 @@ async def execute(code: str) -> str:
 
     If you need to debug an error message, use the introspection tools (e.g `cat`) to analyse the *.lua and *.py implementations.
 
-    When the RCON connection is lost, the tool re-discovers the containers once.
-    If the same endpoint is reachable again the code is retried there, so a
-    script that already changed the world before the socket died can run twice.
-    If the container moved to a different endpoint, the code is *not* replayed
-    because that endpoint is another world; the error reports where the session
-    reconnected so the code can be submitted again deliberately.
+    When the RCON connection is lost, the tool re-discovers the containers and
+    reconnects once, then reports where the session landed together with the
+    error. The submitted code is never re-executed automatically: whether the
+    endpoint hosts the same world is not observable from here, so re-running a
+    script that may already have mutated a world is left to the caller.
 
     Args:
         code: Python code to execute
@@ -152,13 +151,13 @@ async def execute(code: str) -> str:
     except Exception as error:
         if not is_lost_rcon_connection(instance, error):
             raise
-        # The socket behind this session is gone: re-discover once and decide
-        # whether this code may run again.
+        # The socket behind this session is gone: heal the connection so the
+        # caller can continue, but never replay code that may already have run.
         log_info(
             f"RCON connection lost ({type(error).__name__}: {error}); "
             "re-discovering Factorio containers"
         )
-        previous_endpoint = (instance.address, instance.tcp_port)
+        previous_endpoint = f"{instance.address}:{instance.tcp_port}"
         reconnect_report = await reconnect()
         reconnected = state.active_server
         if reconnected is None or reconnected is instance:
@@ -166,18 +165,13 @@ async def execute(code: str) -> str:
                 f"Execution failed: {error}\nReconnect failed: {reconnect_report}"
             ) from error
 
-        instance = reconnected
-        vcs = state.get_vcs()
-        endpoint = f"{instance.address}:{instance.tcp_port}"
-        if (instance.address, instance.tcp_port) != previous_endpoint:
-            # Replaying here would mutate a world the caller did not select.
-            raise Exception(
-                f"Execution failed: {error}\nThe Factorio container is now at "
-                f"{endpoint} (was {previous_endpoint[0]}:{previous_endpoint[1]}); "
-                "the code was not retried in that world. Call `execute` again if "
-                "it should run there."
-            ) from error
-        result, score, response = instance.eval(code, timeout=60)
+        raise Exception(
+            f"Execution failed: {error}\n"
+            f"The RCON connection was lost. The session reconnected to "
+            f"{reconnected.address}:{reconnected.tcp_port} (was "
+            f"{previous_endpoint}); the code was not executed there. Call "
+            "`execute` again if that is the world you want."
+        ) from error
 
     # Automatically commit the successful state
     current_state = GameState.from_instance(instance)

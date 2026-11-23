@@ -306,41 +306,41 @@ def test_reconnect_reports_a_missing_container_instead_of_pretending(harness):
     assert catalogue.cluster.opened == [], "nothing may be connected"
 
 
-def test_execute_retries_once_when_the_same_endpoint_is_reachable_again(harness):
+def test_execute_reconnects_to_the_new_endpoint_without_replaying(harness):
     catalogue = harness(FakeCluster([PORT_A]))
     catalogue.cluster.initial_eval_error = ConnectionError("stale RCON socket")
     catalogue.reconnect()
     dead_instance = catalogue.state.active_server
 
-    # The same endpoint answers again (e.g. RCON restarted), so the same world
-    # is still reachable and the code may run once more.
-    output = catalogue.execute("1 + 1")
-
-    active = catalogue.state.active_server
-    assert active is not dead_instance
-    assert active.tcp_port == PORT_A
-    assert len(dead_instance.eval_calls) == 1
-    assert active.eval_calls == ["1 + 1"], "the code must be retried exactly once"
-    assert output.startswith("[commit ")
-
-
-def test_execute_does_not_replay_code_in_a_recreated_container(harness):
-    catalogue = harness(FakeCluster([PORT_A]))
-    catalogue.cluster.initial_eval_error = ConnectionError("stale RCON socket")
-    catalogue.reconnect()
-    dead_instance = catalogue.state.active_server
-
-    # The container is recreated on another host port: another endpoint, and so
-    # another world that the caller did not choose.
+    # The container is recreated on another host port; the session heals, but
+    # the code must not run in whatever world now answers.
     catalogue.cluster.tcp_ports = [PORT_B]
 
-    with pytest.raises(Exception, match="not retried in that world"):
+    with pytest.raises(Exception, match="the code was not executed there"):
         catalogue.execute("1 + 1")
 
     active = catalogue.state.active_server
     assert active is not dead_instance
     assert active.tcp_port == PORT_B, "the session must still reconnect"
-    assert active.eval_calls == [], "the code must not be replayed in the new world"
+    assert active.eval_calls == [], "the code must not run in the reconnected world"
+    assert len(dead_instance.eval_calls) == 1
+
+
+def test_execute_does_not_replay_even_when_the_endpoint_is_reused(harness):
+    catalogue = harness(FakeCluster([PORT_A]))
+    catalogue.cluster.initial_eval_error = ConnectionError("stale RCON socket")
+    catalogue.reconnect()
+    dead_instance = catalogue.state.active_server
+
+    # A fresh world on the same address and port looks identical from here, so
+    # an endpoint match cannot justify replaying either.
+    with pytest.raises(Exception, match="the code was not executed there"):
+        catalogue.execute("1 + 1")
+
+    active = catalogue.state.active_server
+    assert active is not dead_instance
+    assert active.tcp_port == PORT_A
+    assert active.eval_calls == [], "the code must not be replayed automatically"
     assert len(dead_instance.eval_calls) == 1
 
 
