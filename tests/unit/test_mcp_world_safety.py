@@ -1166,10 +1166,11 @@ def test_observations_are_built_for_the_attached_container(monkeypatch):
     """The observation env must be constructed for the attachment, not the pin."""
 
     calls = []
+    resets = []
 
     class _FakeEnv:
         def reset(self, *args, **kwargs):
-            return None
+            resets.append(kwargs)
 
         def close(self):
             return None
@@ -1218,10 +1219,11 @@ def test_a_rolled_back_reattach_does_not_provision_the_previous_world(monkeypatc
     world the session fell back to."""
 
     calls = []
+    resets = []
 
     class _FakeEnv:
         def reset(self, *args, **kwargs):
-            return None
+            resets.append(kwargs)
 
         def close(self):
             return None
@@ -1281,8 +1283,10 @@ def test_a_rolled_back_reattach_does_not_provision_the_previous_world(monkeypatc
     assert state.active_server is attached
 
     calls.clear()
+    resets.clear()
     rebuilt = state.gym_env
 
+    assert resets == [], "the rebuild must not reset the world it observes"
     assert calls, "observations should be rebuilt for the restored attachment"
     assert calls[0]["reset_on_init"] is False, "the rebuild must not provision again"
     assert calls[0]["container_name"] == "factorio_1"

@@ -167,8 +167,13 @@ class FactorioMCPState:
         )
 
     def _reset_gym_env(self):
-        """Reset the observation environment — provisioning only."""
-        if config.reset_on_connect():
+        """Provision the observation environment — only for an attach.
+
+        ``_provision_gym_env`` is what actually guarantees that a rebuild after
+        a rolled-back attach cannot reset the world: gating construction alone
+        is not enough, because the environment is reset right after it is built.
+        """
+        if self._provision_gym_env and config.reset_on_connect():
             self._gym_env.reset()
 
     def _build_instance(self, address: str, tcp_port: int) -> FactorioInstance:
