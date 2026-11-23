@@ -10,7 +10,7 @@ from fle.commons.cluster_ips import (
     select_container,
 )
 from fle.env.protocols._mcp import config
-from fle.env.protocols._mcp.state import FactorioMCPState
+from fle.env.protocols._mcp.state import FactorioMCPState, release_level_handlers
 
 # Initialize server state
 state = FactorioMCPState()
@@ -112,6 +112,10 @@ async def shutdown_session():
         if server is None:
             return
         log_info("Disconnecting from Factorio server...")
+
+        # Unregister the level-script handlers before the socket goes away: on a
+        # world we do not own they are what makes the save refuse every client.
+        release_level_handlers(server)
 
         try:
             if config.reset_on_shutdown():

@@ -1811,3 +1811,39 @@ def test_undo_is_allowed_on_a_world_this_session_owns(monkeypatch):
     monkeypatch.delenv("FLE_RCON_PORT", raising=False)
 
     assert version_control_module._foreign_world_refusal("undo") == ""
+
+
+class _FakeRcon:
+    def __init__(self, replies=None):
+        self.commands = []
+        self.replies = replies or {}
+
+    def send_command(self, command):
+        self.commands.append(command)
+        for needle, reply in self.replies.items():
+            if needle in command:
+                return reply
+        return ""
+
+
+class _FakeInstance:
+    def __init__(self, rcon):
+        self.rcon_client = rcon
+
+
+def test_handlers_are_released_only_on_a_world_we_do_not_own(monkeypatch):
+    rcon = _FakeRcon()
+    instance = _FakeInstance(rcon)
+
+    monkeypatch.delenv("FLE_RCON_HOST", raising=False)
+    monkeypatch.delenv("FLE_RCON_PORT", raising=False)
+    assert state_module.release_level_handlers(instance) is False
+    assert rcon.commands == [], "a sandbox we own may keep its handlers"
+
+    monkeypatch.setenv("FLE_RCON_HOST", "127.0.0.1")
+    monkeypatch.setenv("FLE_RCON_PORT", "34199")
+    assert state_module.release_level_handlers(instance) is True
+    sent = rcon.commands[-1]
+    assert "on_tick" in sent and "on_script_path_request_finished" in sent
+    assert "on_nth_tick(5, nil)" in sent and "on_nth_tick(15, nil)" in sent
+    assert sent.startswith("/sc ")

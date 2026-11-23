@@ -10,7 +10,8 @@ from fle.commons.models.game_state import GameState
 
 from fle.env.protocols._mcp.models import FactorioServer
 from fle.env.protocols._mcp.init import log_info, state, initialize_session
-from fle.env.protocols._mcp import mcp
+from fle.env.protocols._mcp import config, mcp
+from fle.env.protocols._mcp.state import release_level_handlers
 
 
 # ============== CONNECTION HELPERS ==============
@@ -172,6 +173,9 @@ async def execute(code: str) -> str:
             f"{previous_endpoint}); the code was not executed there. Call "
             "`execute` again if that is the world you want."
         ) from error
+    finally:
+        # A world we do not own must stay joinable between calls.
+        release_level_handlers(instance)
 
     # Automatically commit the successful state
     current_state = GameState.from_instance(instance)
@@ -198,23 +202,29 @@ async def execute(code: str) -> str:
         # Don't fail the whole execution just because state file update failed
         pass
 
-    '/c local surface = game.player.surface; for key, entity in pairs(surface.find_entities_filtered({force="enemy"})) do; entity.destroy(); end'
+    meta = ""
 
-    try:
-        player_pos = instance.namespace.player_location
-        # RCON command to move camera to player position
-        rcon_cmd = f"/c game.players[1].teleport({{x={player_pos.x}, y={player_pos.y}}})"  # ; game.player.zoom_to_world(game.player.position, 1)'
-        meta = instance.rcon_client.send_command(rcon_cmd)
+    # Showing the agent by moving the player's camera, and clearing the biters so
+    # a benchmark is not disturbed by them, are lab conveniences: they assume the
+    # world is ours. On a world reached through a pinned endpoint, teleporting
+    # players[1] yanks a human's character across the map and killing every enemy
+    # unit deletes the player's biters. Neither is ours to do there.
+    if config.direct_rcon_endpoint() is None:
+        try:
+            player_pos = instance.namespace.player_location
+            # RCON command to move camera to player position
+            rcon_cmd = f"/c game.players[1].teleport({{x={player_pos.x}, y={player_pos.y}}})"  # ; game.player.zoom_to_world(game.player.position, 1)'
+            meta = instance.rcon_client.send_command(rcon_cmd)
 
-        kill_biters_cmd = '/c game.forces["enemy"].kill_all_units()'
-        instance.rcon_client.send_command(kill_biters_cmd)
+            kill_biters_cmd = '/c game.forces["enemy"].kill_all_units()'
+            instance.rcon_client.send_command(kill_biters_cmd)
 
-        clear_rendering = "/c rendering.clear()"
-        instance.rcon_client.send_command(clear_rendering)
+            clear_rendering = "/c rendering.clear()"
+            instance.rcon_client.send_command(clear_rendering)
 
-    except Exception as e:
-        # Don't fail execution if viewport move fails
-        meta = str(e)
+        except Exception as e:
+            # Don't fail execution if viewport move fails
+            meta = str(e)
 
     return f"[commit {commit_id[:8]}] - stdio:\n{response}\n{meta}"
 

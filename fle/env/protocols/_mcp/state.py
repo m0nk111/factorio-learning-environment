@@ -228,6 +228,9 @@ class FactorioMCPState:
             },
             all_technologies_researched=False,
             reset_on_init=config.reset_on_connect(),
+            # A world reached through a pinned endpoint is not ours: no speed 10,
+            # no unpause. The player's clock stays the player's clock.
+            reset_speed=None if config.direct_rcon_endpoint() is not None else 10,
         )
         # Ensure agent characters exist (removed one-time associate command)
         # Check if agent characters exist, if not create them
@@ -236,9 +239,12 @@ class FactorioMCPState:
         )
 
         if int(char_check) == 0:
-            instance.first_namespace._create_agent_characters(1)
+            # own_world=False: a world we reached through a pinned endpoint is not
+            # ours, so the attach may add a character but never remove one.
+            instance.first_namespace._create_agent_characters(
+                1, config.direct_rcon_endpoint() is None
+            )
 
-        instance.set_speed(10)
         return instance
 
     def create_factorio_instance(
@@ -547,3 +553,38 @@ class FactorioMCPState:
         except Exception as e:
             _diag(f"Error loading recipes from file: {e}")
             raise e
+
+
+# FLE runs its Lua in the level script's context, over RCON. Anything it
+# registers there with script.on_event lives in the server's memory only: a save
+# written while those registrations exist cannot be joined by a client, because
+# the map it downloads re-runs the level script and that script never registers
+# them — Factorio then reports a script-event mismatch. Releasing them after each
+# call keeps a world we do not own joinable between calls.
+LEVEL_HANDLER_EVENTS = ("on_tick", "on_script_path_request_finished")
+LEVEL_HANDLER_INTERVALS = (5, 15)
+
+_RELEASE_HANDLERS_LUA = (
+    "for _, name in ipairs({"
+    + ", ".join(f'"{event}"' for event in LEVEL_HANDLER_EVENTS)
+    + "}) do script.on_event(defines.events[name], nil) end "
+    + " ".join(
+        f"script.on_nth_tick({interval}, nil)" for interval in LEVEL_HANDLER_INTERVALS
+    )
+)
+
+
+def release_level_handlers(instance) -> bool:
+    """Unregister FLE's level-script handlers.
+
+    Only on a world this session does not own: a sandbox it provisioned may keep
+    them, and there a benchmark may depend on them ticking.
+    """
+    if instance is None or config.direct_rcon_endpoint() is None:
+        return False
+    try:
+        instance.rcon_client.send_command("/sc " + _RELEASE_HANDLERS_LUA)
+        return True
+    except Exception as error:  # the world stays usable; this is best effort
+        _diag(f"Could not release level handlers: {type(error).__name__}: {error}")
+        return False
