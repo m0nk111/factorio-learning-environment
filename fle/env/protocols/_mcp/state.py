@@ -339,8 +339,12 @@ class FactorioMCPState:
         instance = None
 
         try:
-            # Create an instance to the server
-            instance = self.create_factorio_instance(instance_id)
+            # Create an instance to the server, passing the endpoint that the
+            # scan resolved: a fresh discovery by index could pick a container
+            # that appeared since the scan (FLE_SERVER would be bypassed).
+            instance = self.create_factorio_instance(
+                instance_id, address=server.address, tcp_port=server.tcp_port
+            )
 
             # If we get here, the connection was successful
             server.connected = True

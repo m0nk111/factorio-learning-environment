@@ -64,6 +64,45 @@ def _published_port(ports: dict, protocol: str, preferred: int) -> Optional[int]
     return candidates[0][1]
 
 
+def _published_binding(
+    ports: dict, protocol: str, preferred: int
+) -> tuple[Optional[str], Optional[int]]:
+    """Return the published ``(host_ip, host_port)`` for `protocol`.
+
+    Containers that publish the same RCON port on different host addresses are
+    only distinguishable through the binding's ``HostIp``, so discovery keeps it
+    instead of assuming loopback for everything.
+    """
+    candidates = []
+    for container_port, bindings in (ports or {}).items():
+        if not container_port.endswith(f"/{protocol}") or not bindings:
+            continue
+        try:
+            internal = int(container_port.split("/")[0])
+        except ValueError:
+            internal = -1
+        binding = bindings[0]
+        candidates.append(
+            (internal, binding.get("HostIp") or "", int(binding["HostPort"]))
+        )
+    if not candidates:
+        return None, None
+    for internal, host_ip, host_port in candidates:
+        if internal == preferred:
+            return host_ip, host_port
+    _, host_ip, host_port = candidates[0]
+    return host_ip, host_port
+
+
+def _reachable_host(host_ip: str) -> str:
+    """Host address to connect to for a published binding."""
+    if not host_ip or host_ip in ("0.0.0.0", "::", "[::]"):
+        # A wildcard publish is reachable on loopback; an empty HostIp is what
+        # older Docker versions report for the same thing.
+        return "127.0.0.1"
+    return host_ip
+
+
 def list_factorio_containers() -> List[FactorioContainer]:
     """List running containers whose name contains ``factorio_``.
 
@@ -88,7 +127,7 @@ def list_factorio_containers() -> List[FactorioContainer]:
         container_info = json.loads(inspect.stdout)[0]
         ports = container_info["NetworkSettings"]["Ports"]
         udp_port = _published_port(ports, "udp", INTERNAL_GAME_PORT)
-        tcp_port = _published_port(ports, "tcp", INTERNAL_RCON_PORT)
+        rcon_host, tcp_port = _published_binding(ports, "tcp", INTERNAL_RCON_PORT)
         if tcp_port is None:
             # No RCON endpoint: nothing this process can talk to. A container
             # that publishes RCON but no game port is still usable (headless
@@ -102,9 +141,9 @@ def list_factorio_containers() -> List[FactorioContainer]:
             FactorioContainer(
                 name=container_info.get("Name", container_id).lstrip("/"),
                 container_id=container_id,
-                # The published host port is what we connect to; containers are
-                # published on loopback by the cluster launcher.
-                address="127.0.0.1",
+                # The published binding decides the address: two containers can
+                # publish the same port on different hosts.
+                address=_reachable_host(rcon_host or ""),
                 tcp_port=tcp_port,
                 udp_port=udp_port,
             )

@@ -41,6 +41,7 @@ from fle.commons.cluster_ips import (  # noqa: E402
     ContainerSelectionError,
     FactorioContainer,
     _published_port,
+    list_factorio_containers,
     select_container,
 )
 from fle.env.protocols._mcp import config  # noqa: E402
@@ -790,7 +791,7 @@ def test_lab_mode_builds_the_observation_env_at_connect_time(monkeypatch):
             address="127.0.0.1", tcp_port=27100, is_active=True, instance_id=0
         )
         monkeypatch.setattr(
-            state, "create_factorio_instance", lambda instance_id: object()
+            state, "create_factorio_instance", lambda instance_id, **kw: object()
         )
 
         async def refresh(instance_id):
@@ -899,7 +900,7 @@ def test_a_failed_attach_rolls_back_the_connection(monkeypatch):
     state.available_servers = {1: server}
 
     monkeypatch.setattr(
-        state, "create_factorio_instance", lambda instance_id: _FakeInstance()
+        state, "create_factorio_instance", lambda instance_id, **kw: _FakeInstance()
     )
 
     async def failing_provisioning(instance_id):
@@ -931,7 +932,7 @@ def test_a_failed_attach_keeps_the_previous_attachment(monkeypatch):
     state.active_server = previous
 
     monkeypatch.setattr(
-        state, "create_factorio_instance", lambda instance_id: _FakeInstance()
+        state, "create_factorio_instance", lambda instance_id, **kw: _FakeInstance()
     )
 
     async def failing_provisioning(instance_id):
@@ -972,7 +973,9 @@ def test_the_attach_survives_a_missing_recipe_dump(tmp_path, monkeypatch):
     state.available_servers = {1: server}
 
     monkeypatch.setattr(state_module, "RECIPES_PATH", tmp_path / "recipes.jsonl")
-    monkeypatch.setattr(state, "create_factorio_instance", lambda instance_id: instance)
+    monkeypatch.setattr(
+        state, "create_factorio_instance", lambda instance_id, **kw: instance
+    )
 
     async def refreshes(instance_id):
         return None
@@ -1009,7 +1012,9 @@ def test_a_failed_attach_discards_its_observation_env(tmp_path, monkeypatch):
 
     monkeypatch.setenv("FLE_RESET_ON_CONNECT", "1")
     monkeypatch.setattr(state_module, "RECIPES_PATH", tmp_path / "recipes.jsonl")
-    monkeypatch.setattr(state, "create_factorio_instance", lambda instance_id: instance)
+    monkeypatch.setattr(
+        state, "create_factorio_instance", lambda instance_id, **kw: instance
+    )
     monkeypatch.setattr(state, "_make_gym_env", lambda env_id: _FakeEnv())
 
     async def refreshes(instance_id):
@@ -1040,7 +1045,7 @@ def test_a_failed_reattach_keeps_the_previous_connected_flag(monkeypatch):
     state.available_servers = {1: server}
     state.active_server = previous
 
-    def failing_factory(instance_id):
+    def failing_factory(instance_id, **kwargs):
         raise RuntimeError("cannot build the instance")
 
     monkeypatch.setattr(state, "create_factorio_instance", failing_factory)
@@ -1084,7 +1089,9 @@ def test_a_failed_attach_discards_a_replacement_observation_env(tmp_path, monkey
     monkeypatch.setenv("FLE_RESET_ON_CONNECT", "1")
     monkeypatch.setenv("FLE_SERVER", "factorio_other")
     monkeypatch.setattr(state_module, "RECIPES_PATH", tmp_path / "recipes.jsonl")
-    monkeypatch.setattr(state, "create_factorio_instance", lambda instance_id: instance)
+    monkeypatch.setattr(
+        state, "create_factorio_instance", lambda instance_id, **kw: instance
+    )
     monkeypatch.setattr(state, "_make_gym_env", make_env)
 
     async def refreshes(instance_id):
@@ -1150,7 +1157,7 @@ def test_a_failed_reattach_does_not_repoint_observations(tmp_path, monkeypatch):
     monkeypatch.setattr(state_module, "RECIPES_PATH", tmp_path / "recipes.jsonl")
     monkeypatch.setenv("FLE_RESET_ON_CONNECT", "1")
 
-    def failing_factory(instance_id):
+    def failing_factory(instance_id, **kwargs):
         raise RuntimeError("cannot attach to the pinned server")
 
     monkeypatch.setattr(state, "create_factorio_instance", failing_factory)
@@ -1271,7 +1278,9 @@ def test_a_rolled_back_reattach_does_not_provision_the_previous_world(monkeypatc
 
     # Lab mode: attaching elsewhere provisions that world, then fails.
     monkeypatch.setenv("FLE_RESET_ON_CONNECT", "1")
-    monkeypatch.setattr(state, "create_factorio_instance", lambda instance_id: other)
+    monkeypatch.setattr(
+        state, "create_factorio_instance", lambda instance_id, **kw: other
+    )
     monkeypatch.setattr(
         state,
         "load_recipes_from_file",
@@ -1295,3 +1304,102 @@ def test_a_rolled_back_reattach_does_not_provision_the_previous_world(monkeypatc
 
 async def _noop():
     return None
+
+
+def test_two_containers_publishing_one_port_keep_their_own_address(monkeypatch):
+    """Two containers can publish the same RCON port on different host addresses.
+
+    Discovery used to assign 127.0.0.1 to everything, so probing and connecting
+    reached whichever container owned the loopback binding even when FLE_SERVER
+    named the other one.
+    """
+
+    containers = {
+        "id-a": ("factorio_1", "127.0.0.1"),
+        "id-b": ("factorio_2", "127.0.0.2"),
+    }
+    listing = "".join(f'"{cid}"\n' for cid in containers).strip()
+
+    def fake_run(cmd, capture_output, text):
+        if cmd[:3] == ["docker", "ps", "--filter"]:
+            return subprocess.CompletedProcess(cmd, 0, listing, "")
+        cid = cmd[-1]
+        name, host_ip = containers[cid]
+        payload = [
+            {
+                "Name": f"/{name}",
+                "NetworkSettings": {
+                    "Ports": {
+                        "27015/tcp": [{"HostIp": host_ip, "HostPort": "27100"}],
+                        "34197/udp": [{"HostIp": host_ip, "HostPort": "35197"}],
+                    }
+                },
+            }
+        ]
+        return subprocess.CompletedProcess(cmd, 0, json.dumps(payload), "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    found = {c.name: c.address for c in list_factorio_containers()}
+
+    assert found == {"factorio_1": "127.0.0.1", "factorio_2": "127.0.0.2"}
+
+
+def test_wildcard_publish_still_resolves_to_loopback(monkeypatch):
+    """A wildcard binding is reachable on loopback; an empty HostIp too."""
+
+    payload = [
+        {
+            "Name": "/factorio_1",
+            "NetworkSettings": {
+                "Ports": {
+                    "27015/tcp": [{"HostIp": "", "HostPort": "27100"}],
+                    "34197/udp": [{"HostIp": "0.0.0.0", "HostPort": "35197"}],
+                }
+            },
+        }
+    ]
+
+    def fake_run(cmd, capture_output, text):
+        if cmd[:3] == ["docker", "ps", "--filter"]:
+            return subprocess.CompletedProcess(cmd, 0, '"cid"\n', "")
+        return subprocess.CompletedProcess(cmd, 0, json.dumps(payload), "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    (container,) = list_factorio_containers()
+    assert container.address == "127.0.0.1"
+
+
+def test_the_attach_forwards_the_scanned_endpoint(monkeypatch):
+    """A container appearing between scan and attach must not steal the attach.
+
+    The factory re-discovers by index, so connect_to_server has to pass the
+    endpoint the scan resolved; otherwise a lower-sorted container that starts
+    later takes over the index and the session attaches to the wrong world.
+    """
+
+    seen = {}
+
+    def fake_factory(instance_id, address=None, tcp_port=None):
+        seen.update(instance_id=instance_id, address=address, tcp_port=tcp_port)
+        return _RecordingInstance(name="srv")
+
+    server = state_module.FactorioServer(
+        address="127.0.0.5",
+        tcp_port=27300,
+        instance_id=0,
+        name="pinned",
+        is_active=True,
+    )
+    state = FactorioMCPState()
+    state.available_servers = {0: server}
+    monkeypatch.setattr(state, "create_factorio_instance", fake_factory)
+    monkeypatch.setattr(state, "refresh_game_data", lambda instance_id: _noop())
+    monkeypatch.setattr(state, "load_recipes_from_file", lambda: {"x": 1})
+    monkeypatch.setattr(
+        state_module, "FactorioMCPRepository", lambda instance: object()
+    )
+
+    assert asyncio.run(state.connect_to_server(0)) is True
+    assert seen == {"instance_id": 0, "address": "127.0.0.5", "tcp_port": 27300}
