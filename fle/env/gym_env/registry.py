@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 from dataclasses import dataclass, asdict
 from typing import Any, Dict, List, Optional
@@ -6,7 +7,11 @@ from typing import Any, Dict, List, Optional
 from fle.env.a2a_instance import A2AFactorioInstance
 import gymnasium as gym
 
-from fle.commons.cluster_ips import get_local_container_ips
+from fle.commons.cluster_ips import (
+    get_local_container_ips,
+    list_factorio_containers,
+    select_container,
+)
 from fle.commons.asyncio_utils import run_async_safely
 from fle.env import FactorioInstance
 from fle.env.gym_env.environment import FactorioGymEnv
@@ -95,7 +100,14 @@ class FactorioGymRegistry:
 _registry = FactorioGymRegistry()
 
 
-def make_factorio_env(spec: GymEnvironmentSpec, run_idx: int) -> FactorioGymEnv:
+def make_factorio_env(
+    spec: GymEnvironmentSpec,
+    run_idx: int,
+    reset_on_init: bool = True,
+    container_name: Optional[str] = None,
+    rcon_port: Optional[int] = None,
+    address: Optional[str] = None,
+) -> FactorioGymEnv:
     """Factory function to create a Factorio gym environment.
 
     The instance-creation block (FactorioInstance build + task.setup +
@@ -108,13 +120,67 @@ def make_factorio_env(spec: GymEnvironmentSpec, run_idx: int) -> FactorioGymEnv:
 
     Configuration errors (no containers available, invalid run_idx) are
     raised without retry — they won't fix themselves.
+
+    Args:
+        reset_on_init: provision the world (reset game state, task setup). The
+            evaluation harness needs this; a caller attaching to a world that
+            already holds a factory passes False.
+        container_name / rcon_port: explicit target container. When set, the
+            environment attaches to exactly that container instead of the
+            ``PORT_OFFSET + run_idx`` position, and an unresolvable pin raises
+            with the candidates listed.
     """
     # Create task from the task definition
     task = TaskFactory.create_task(spec.task_config_path)
 
-    # Resolve server address (no retry — pure config)
+    # Resolve server address (no retry — pure config). ``address`` may also be
+    # passed by the caller: the attachment that already resolved its endpoint
+    # forwards it, so a container renamed (or replaced) after the attach cannot
+    # redirect the environment to a different world.
+    attached_address = address
     address = os.getenv("FACTORIO_SERVER_ADDRESS")
     tcp_port = os.getenv("FACTORIO_SERVER_PORT")
+
+    if container_name is not None or rcon_port is not None:
+        # An explicit pin is authoritative: it must not be silently overridden by
+        # FACTORIO_SERVER_ADDRESS/PORT, or a provisioning run would reset a world
+        # the caller did not select. Tested against None, not truthiness: a pin of
+        # 0 (or "") is invalid input, not an absent pin.
+        if rcon_port is not None and not 0 < int(rcon_port) < 65536:
+            raise ValueError(
+                f"rcon_port must be a valid port number, got {rcon_port!r}"
+            )
+        if attached_address is not None and rcon_port is not None:
+            # A complete endpoint from the attachment needs no name resolution:
+            # the container may have been renamed meanwhile, in which case a
+            # lookup would fail (or match a replacement) while the session is
+            # still perfectly connected.
+            address, tcp_port = attached_address, int(rcon_port)
+            print(
+                f"Using attached Factorio container {address}:{tcp_port}",
+                file=sys.stderr,
+            )
+        else:
+            pinned = select_container(
+                list_factorio_containers(),
+                name=container_name,
+                rcon_port=None if rcon_port is None else int(rcon_port),
+            )
+            if (address and address != pinned.address) or (
+                tcp_port and int(tcp_port) != pinned.tcp_port
+            ):
+                raise RuntimeError(
+                    f"Conflicting Factorio target: FACTORIO_SERVER_ADDRESS={address!r} "
+                    f"FACTORIO_SERVER_PORT={tcp_port!r} but the target pin resolves to "
+                    f"{pinned.describe()}. Unset one of the two."
+                )
+            address = pinned.address
+            tcp_port = rcon_port if rcon_port is not None else pinned.tcp_port
+            print(
+                f"Using pinned Factorio container {pinned.describe()}"
+                f" at {address}:{tcp_port}",
+                file=sys.stderr,
+            )
 
     if not address and not tcp_port:
         try:
@@ -169,6 +235,7 @@ def make_factorio_env(spec: GymEnvironmentSpec, run_idx: int) -> FactorioGymEnv:
         instance = None
         try:
             attempt_kwargs = dict(common_kwargs)
+            attempt_kwargs["reset_on_init"] = reset_on_init
             if attempt > 1:
                 # Force fresh Lua script upload on retry — clears stale
                 # server-side state that survived ``cleanup()``.
@@ -184,8 +251,11 @@ def make_factorio_env(spec: GymEnvironmentSpec, run_idx: int) -> FactorioGymEnv:
             # Set initial speed and unpause
             instance.set_speed_and_unpause(10)
 
-            # Setup the task
-            task.setup(instance)
+            # Setup the task. Task setup resets the game state and snapshots a
+            # starting GameState, so it belongs to provisioning only: an
+            # attaching session must not re-provision the world it attaches to.
+            if reset_on_init:
+                task.setup(instance)
 
             # Create and return the gym environment
             return FactorioGymEnv(

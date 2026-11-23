@@ -1,57 +1,297 @@
-import subprocess
+"""Discover the running Factorio containers and resolve an explicit target.
+
+Two callers attach to a container by different routes: an MCP session
+(`fle.env.protocols._mcp`) and the gym factory used by the evaluation harness
+(`fle.env.gym_env.registry`). Both used to address a container purely by
+position in this list, which silently attaches to whichever container happens
+to sort first — a session then mutates a world it was never pointed at.
+
+Everything here therefore reports identity (docker name, published host ports)
+rather than a bare index, and :func:`select_container` resolves an explicit pin
+or fails loudly with the candidates listed.
+"""
+
 import json
-from typing import List
+import subprocess
+import sys
+from dataclasses import dataclass, is_dataclass, replace
+from typing import Iterable, List, Optional, Sequence
+
+# Container-internal ports published by the image; used to pick the right
+# binding when a container publishes more than one port of a protocol.
+INTERNAL_RCON_PORT = 27015
+INTERNAL_GAME_PORT = 34197
+
+
+@dataclass(frozen=True)
+class FactorioContainer:
+    """One running Factorio container, addressed by its published host ports."""
+
+    name: str
+    container_id: str
+    address: str
+    tcp_port: int
+    udp_port: Optional[int] = None
+    # Every published (host, port) for the RCON container port: a container can
+    # be published on several host ports, and a pin may name any of them.
+    rcon_bindings: tuple[tuple[str, int], ...] = ()
+
+    def describe(self) -> str:
+        game_port = self.udp_port if self.udp_port is not None else "none"
+        return (
+            f"{self.name} (address={self.address} "
+            f"rcon_port={self.tcp_port} game_port={game_port})"
+        )
+
+
+class ContainerSelectionError(LookupError):
+    """A pinned target does not resolve to exactly one container."""
+
+
+def _published_port(ports: dict, protocol: str, preferred: int) -> Optional[int]:
+    """Return the host port for `protocol`, preferring the image's internal port."""
+    candidates = []
+    for container_port, bindings in (ports or {}).items():
+        if not container_port.endswith(f"/{protocol}") or not bindings:
+            continue
+        try:
+            internal = int(container_port.split("/")[0])
+        except ValueError:
+            internal = -1
+        candidates.append((internal, int(bindings[0]["HostPort"])))
+    if not candidates:
+        return None
+    for internal, host_port in candidates:
+        if internal == preferred:
+            return host_port
+    return candidates[0][1]
+
+
+def _published_binding(
+    ports: dict, protocol: str, preferred: int
+) -> tuple[Optional[str], Optional[int]]:
+    """Return the published ``(host_ip, host_port)`` for `protocol`.
+
+    Containers that publish the same RCON port on different host addresses are
+    only distinguishable through the binding's ``HostIp``, so discovery keeps it
+    instead of assuming loopback for everything.
+    """
+    candidates = []
+    for container_port, bindings in (ports or {}).items():
+        if not container_port.endswith(f"/{protocol}") or not bindings:
+            continue
+        try:
+            internal = int(container_port.split("/")[0])
+        except ValueError:
+            internal = -1
+        binding = bindings[0]
+        candidates.append(
+            (internal, binding.get("HostIp") or "", int(binding["HostPort"]))
+        )
+    if not candidates:
+        return None, None
+    for internal, host_ip, host_port in candidates:
+        if internal == preferred:
+            return host_ip, host_port
+    _, host_ip, host_port = candidates[0]
+    return host_ip, host_port
+
+
+def _reachable_host(host_ip: str) -> str:
+    """Host address to connect to for a published binding."""
+    if not host_ip or host_ip in ("0.0.0.0", "::", "[::]"):
+        # A wildcard publish is reachable on loopback; an empty HostIp is what
+        # older Docker versions report for the same thing.
+        return "127.0.0.1"
+    return host_ip
+
+
+def _published_bindings(ports: dict, protocol: str, preferred: int) -> list:
+    """Every published ``(host_ip, host_port)`` for `protocol`/`preferred`."""
+    for container_port, bindings in (ports or {}).items():
+        if not container_port.endswith(f"/{protocol}") or not bindings:
+            continue
+        try:
+            internal = int(container_port.split("/")[0])
+        except ValueError:
+            continue
+        if internal != preferred:
+            continue
+        return [
+            (binding.get("HostIp") or "", int(binding["HostPort"]))
+            for binding in bindings
+        ]
+    return []
+
+
+def list_factorio_containers() -> List[FactorioContainer]:
+    """List running containers whose name contains ``factorio_``.
+
+    Sorted by published game port then RCON port, so an index into the result
+    is stable across calls (the historical contract of
+    :func:`get_local_container_ips`).
+    """
+    cmd = ["docker", "ps", "--filter", "name=factorio_", "--format", '"{{.ID}}"']
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    container_ids = [c.strip('"') for c in result.stdout.strip().split("\n")]
+    container_ids = [c for c in container_ids if c]
+
+    if not container_ids:
+        print("No running Factorio containers found", file=sys.stderr)
+        return []
+
+    containers = []
+    for container_id in container_ids:
+        inspect = subprocess.run(
+            ["docker", "inspect", container_id], capture_output=True, text=True
+        )
+        container_info = json.loads(inspect.stdout)[0]
+        ports = container_info["NetworkSettings"]["Ports"]
+        udp_port = _published_port(ports, "udp", INTERNAL_GAME_PORT)
+        bindings = _published_bindings(ports, "tcp", INTERNAL_RCON_PORT)
+        rcon_host, tcp_port = (
+            bindings[0]
+            if bindings
+            else _published_binding(ports, "tcp", INTERNAL_RCON_PORT)
+        )
+        if tcp_port is None:
+            # No RCON endpoint: nothing this process can talk to. A container
+            # that publishes RCON but no game port is still usable (headless
+            # servers), so only the missing RCON port is disqualifying.
+            print(
+                f"Skipping container {container_id}: no published RCON port",
+                file=sys.stderr,
+            )
+            continue
+        containers.append(
+            FactorioContainer(
+                name=container_info.get("Name", container_id).lstrip("/"),
+                container_id=container_id,
+                # The published binding decides the address: two containers can
+                # publish the same port on different hosts.
+                address=_reachable_host(rcon_host or ""),
+                rcon_bindings=tuple(
+                    (_reachable_host(host or ""), port) for host, port in bindings
+                ),
+                tcp_port=tcp_port,
+                udp_port=udp_port,
+            )
+        )
+
+    # Game-port order first (historical index order), RCON-only containers last.
+    containers.sort(key=lambda c: (c.udp_port is None, c.udp_port or 0, c.tcp_port))
+    return containers
 
 
 def get_local_container_ips() -> tuple[List[str], List[int], List[int]]:
-    """Get IP addresses of running Factorio containers in the local Docker setup."""
-    # Get container IDs for factorio containers
-    cmd = ["docker", "ps", "--filter", "name=factorio_", "--format", '"{{.ID}}"']
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    container_ids = result.stdout.strip().split("\n")
-    container_ids = [id.strip('"') for id in container_ids]
+    """Get IP addresses of running Factorio containers in the local Docker setup.
 
-    if not container_ids or container_ids[0] == "":
-        print("No running Factorio containers found")
-        return []
+    Returns parallel lists of address, game (UDP) port and RCON (TCP) port. Use
+    :func:`list_factorio_containers` when you need to know *which* container you
+    are about to address.
 
-    ips = []
-    udp_ports = []
-    tcp_ports = []
-    for container_id in container_ids:
-        # Get container details in JSON format
-        cmd = ["docker", "inspect", container_id]
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        container_info = json.loads(result.stdout)
+    A container that publishes RCON but no game port is still returned, with
+    ``-1`` in the game-port list: the game port is only needed for clients that
+    join as players.
+    """
+    containers = list_factorio_containers()
+    if not containers:
+        return [], [], []
+    return (
+        [c.address for c in containers],
+        [c.udp_port if c.udp_port is not None else -1 for c in containers],
+        [c.tcp_port for c in containers],
+    )
 
-        # Get host ports for UDP game port
-        ports = container_info[0]["NetworkSettings"]["Ports"]
 
-        # Find the UDP port mapping
-        for port, bindings in ports.items():
-            if "/udp" in port and bindings:
-                udp_port = bindings[0]["HostPort"]
-                udp_ports.append(int(udp_port))
+def format_candidates(containers: Iterable) -> str:
+    """One line per candidate: name, address and published ports."""
+    lines = []
+    for container in containers:
+        name = getattr(container, "name", None) or "<unnamed>"
+        extra = ""
+        if hasattr(container, "is_active") and not container.is_active:
+            extra = " active=False"
+        udp_port = getattr(container, "udp_port", None)
+        lines.append(
+            f"  - {name} (address={container.address} "
+            f"rcon_port={container.tcp_port} "
+            f"game_port={udp_port if udp_port is not None else 'none'}{extra})"
+        )
+    return "\n".join(lines) if lines else "  (none)"
 
-            if "/tcp" in port and bindings:
-                tcp_port = bindings[0]["HostPort"]
-                tcp_ports.append(int(tcp_port))
 
-        # Append the IP address with the UDP port to the list
-        ips.append("127.0.0.1")
+def _bind_to_port(container, port: int):
+    """Return `container` re-addressed to the published binding for `port`."""
+    if int(getattr(container, "tcp_port", 0)) == port:
+        return container
+    for host, candidate_port in getattr(container, "rcon_bindings", ()):
+        if int(candidate_port) == port and is_dataclass(container):
+            return replace(container, address=host, tcp_port=port)
+    return container
 
-    # order by port number
-    udp_ports.sort(key=lambda x: int(x))
-    tcp_ports.sort(key=lambda x: int(x))
 
-    return ips, udp_ports, tcp_ports
+def select_container(
+    candidates: Sequence,
+    name: Optional[str] = None,
+    rcon_port: Optional[int] = None,
+):
+    """Return the single candidate matching the pin.
+
+    ``candidates`` may hold any objects exposing ``name``, ``address`` and
+    ``tcp_port`` (:class:`FactorioContainer` and the MCP ``FactorioServer`` both
+    do). No pin returns the first candidate. A pin that matches nothing, or a
+    name and a port that point at different candidates, raises
+    :class:`ContainerSelectionError` with every candidate listed — an ambiguous
+    target must never fall back to "whatever sorts first".
+    """
+    candidates = list(candidates)
+    if not candidates:
+        raise ContainerSelectionError("no Factorio containers are running")
+
+    if name is None and rcon_port is None:
+        return candidates[0]
+
+    matches = candidates
+    if name is not None:
+        matches = [c for c in matches if getattr(c, "name", None) == name]
+    if rcon_port is not None:
+
+        def publishes(container) -> bool:
+            if int(getattr(container, "tcp_port", 0)) == int(rcon_port):
+                return True
+            return any(
+                int(port) == int(rcon_port)
+                for _, port in getattr(container, "rcon_bindings", ())
+            )
+
+        matches = [c for c in matches if publishes(c)]
+        if len(matches) == 1:
+            return _bind_to_port(matches[0], int(rcon_port))
+
+    if len(matches) == 1:
+        return matches[0]
+
+    pin = ", ".join(
+        part
+        for part in (
+            f"FLE_SERVER={name!r}" if name is not None else None,
+            f"FLE_RCON_PORT={rcon_port}" if rcon_port is not None else None,
+        )
+        if part
+    )
+    reason = "no running container matches" if not matches else "pin is ambiguous"
+    raise ContainerSelectionError(
+        f"{reason} {pin}. Candidates:\n"
+        f"{format_candidates(candidates) if candidates else '  (none)'}"
+    )
 
 
 if __name__ == "__main__":
-    ips, udp_ports, tcp_ports = get_local_container_ips()
-    if ips:
-        print("Local Factorio container addresses:")
-        for ip in ips:
-            print(ip)
+    found = list_factorio_containers()
+    if found:
+        print("Local Factorio containers:")
+        for container in found:
+            print(f"  {container.describe()}")
     else:
         print("No local Factorio containers found.")

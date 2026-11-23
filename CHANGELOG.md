@@ -5,6 +5,20 @@ All notable changes to the Factorio Learning Environment will be documented in t
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- An MCP session no longer wipes the world it attaches to. `shutdown_session()` called `state.active_server.reset()` (→ `game.reset_game_state()`), so one initialize-and-exit cycle turned a seeded save (162 belts, 4 assemblers, 43,758 trees) into a pristine regenerated map (0 belts, 0 assemblers, 57,272 trees). Closing a session now only closes RCON and drops in-process state. The implicit resets on the connect path are gone too: `FactorioInstance(reset_on_init=False)` skips the game-state reset, entity clearing, chunk generation, enemy removal and agent-character recreation, `make_factorio_env(reset_on_init=False)` skips `task.setup()`, and the MCP state no longer builds a live gym environment (or touches any container) at import time. The lab behaviour is opt-in: `FLE_RESET_ON_CONNECT=1` and `FLE_RESET_ON_SHUTDOWN=1` (both default 0)
+
+### Added
+
+- `FLE_SERVER` / `FLE_RCON_PORT` pin the container an MCP session attaches to. With two `factorio_*` containers running, the session used to attach to `active_servers[0]` — whichever container sorted first — and mutate the wrong world. A pin connects to exactly that container or fails loudly with the candidates listed, and only the pinned container is probed. Without a pin every candidate (name, address, game port, RCON port) and the selected one are logged to stderr
+
+### Changed
+
+- Container discovery reports identity: `fle.commons.cluster_ips.list_factorio_containers()` returns name, address and published ports per container, and `select_container()` resolves a pin. `get_local_container_ips()` keeps its signature and now pairs each container's ports before sorting, so a container publishing several ports can no longer shift the port lists out of alignment
+
 ## [0.4.8] - 2026-09-04
 
 ### Fixed
