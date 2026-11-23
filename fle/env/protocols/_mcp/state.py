@@ -266,7 +266,7 @@ class FactorioMCPState:
         # attachment so a failed attempt leaves the session exactly as it was.
         previous_active_server = self.active_server
         was_connected = getattr(server, "connected", False)
-        had_gym_env = self._gym_env is not None
+        previous_gym_env = self._gym_env
         instance = None
 
         try:
@@ -303,9 +303,11 @@ class FactorioMCPState:
             # a live RCON connection or a server marked as connected.
             self.active_server = previous_active_server
             server.connected = was_connected
-            if not had_gym_env and self._gym_env is not None:
-                # Lab mode built an observation environment during this attempt;
-                # it holds its own RCON connection and must not stay cached.
+            if self._gym_env is not previous_gym_env and self._gym_env is not None:
+                # Lab mode built (or replaced) an observation environment during
+                # this attempt; it holds its own RCON connection and must not stay
+                # cached. Comparing identity also covers a cached environment that
+                # was closed and replaced because the pin changed.
                 self.close_gym_env()
             if instance is not None:
                 try:

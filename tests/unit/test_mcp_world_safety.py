@@ -1044,3 +1044,59 @@ def test_a_failed_reattach_keeps_the_previous_connected_flag(monkeypatch):
     assert asyncio.run(state.connect_to_server(1)) is False
     assert server.connected is True
     assert state.active_server is previous
+
+
+def test_a_failed_attach_discards_a_replacement_observation_env(tmp_path, monkeypatch):
+    """A pin change replaces the cached env; the replacement must not survive either."""
+
+    built = []
+
+    class _FakeEnv:
+        def __init__(self, tag):
+            self.tag = tag
+            self.closed = False
+
+        def reset(self, *args, **kwargs):
+            return None
+
+        def close(self):
+            self.closed = True
+
+    def make_env(env_id):
+        env = _FakeEnv(f"env-{len(built)}")
+        built.append(env)
+        return env
+
+    instance = _RecordingInstance(name="srv")
+    server = state_module.FactorioServer(
+        address="127.0.0.1", tcp_port=27200, instance_id=1, name="srv", is_active=True
+    )
+    state = FactorioMCPState()
+    state.available_servers = {1: server}
+    # A cached environment built for the unpinned target.
+    state._gym_env = make_env("preexisting")
+    state._gym_env_target = (None, None)
+
+    monkeypatch.setenv("FLE_RESET_ON_CONNECT", "1")
+    monkeypatch.setenv("FLE_SERVER", "factorio_other")
+    monkeypatch.setattr(state_module, "RECIPES_PATH", tmp_path / "recipes.jsonl")
+    monkeypatch.setattr(state, "create_factorio_instance", lambda instance_id: instance)
+    monkeypatch.setattr(state, "_make_gym_env", make_env)
+
+    async def refreshes(instance_id):
+        return None
+
+    monkeypatch.setattr(state, "refresh_game_data", refreshes)
+    monkeypatch.setattr(
+        state,
+        "load_recipes_from_file",
+        lambda: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+
+    assert asyncio.run(state.connect_to_server(1)) is False
+    assert len(built) == 2, "the pin change should have built a replacement"
+    assert built[0].closed is True
+    assert built[1].closed is True, (
+        "the replacement created by the failed attach must be closed"
+    )
+    assert state._gym_env is None
