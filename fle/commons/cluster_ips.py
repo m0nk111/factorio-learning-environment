@@ -150,7 +150,9 @@ def list_factorio_containers() -> List[FactorioContainer]:
         udp_port = _published_port(ports, "udp", INTERNAL_GAME_PORT)
         bindings = _published_bindings(ports, "tcp", INTERNAL_RCON_PORT)
         rcon_host, tcp_port = (
-            bindings[0] if bindings else _published_binding(ports, "tcp", INTERNAL_RCON_PORT)
+            bindings[0]
+            if bindings
+            else _published_binding(ports, "tcp", INTERNAL_RCON_PORT)
         )
         if tcp_port is None:
             # No RCON endpoint: nothing this process can talk to. A container
@@ -254,6 +256,7 @@ def select_container(
     if name is not None:
         matches = [c for c in matches if getattr(c, "name", None) == name]
     if rcon_port is not None:
+
         def publishes(container) -> bool:
             if int(getattr(container, "tcp_port", 0)) == int(rcon_port):
                 return True
