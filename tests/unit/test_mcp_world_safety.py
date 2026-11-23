@@ -47,6 +47,10 @@ from fle.env.protocols._mcp import config  # noqa: E402
 from fle.env.protocols._mcp import init as session_module  # noqa: E402
 from fle.env.protocols._mcp.state import FactorioMCPState  # noqa: E402
 
+# Captured at import time: the autouse guard below replaces the class attribute,
+# so a test that needs the real builder has to keep a reference to it.
+REAL_MAKE_GYM_ENV = FactorioMCPState._make_gym_env
+
 
 @dataclass
 class _RecordingInstance:
@@ -1156,3 +1160,52 @@ def test_a_failed_reattach_does_not_repoint_observations(tmp_path, monkeypatch):
     assert state.observation_target() == ("127.0.0.1", 27200)
     assert state.gym_env is observed_first, "observations must not move to the new pin"
     assert state._gym_env_target == observed_target
+
+
+def test_observations_are_built_for_the_attached_container(monkeypatch):
+    """The observation env must be constructed for the attachment, not the pin."""
+
+    calls = []
+
+    class _FakeEnv:
+        def reset(self, *args, **kwargs):
+            return None
+
+        def close(self):
+            return None
+
+    fake_gym = types.SimpleNamespace(
+        make=lambda env_id, **kwargs: calls.append(kwargs) or _FakeEnv()
+    )
+    monkeypatch.setattr(state_module, "gym", fake_gym)
+    # Restore the real builder for this test; `gym` is stubbed above, so nothing
+    # attaches to a live container.
+    monkeypatch.setattr(
+        state_module.FactorioMCPState, "_make_gym_env", REAL_MAKE_GYM_ENV
+    )
+
+    attached = _RecordingInstance(name="factorio_1")
+    attached.address = "127.0.0.1"
+    attached.tcp_port = 27200
+    record = state_module.FactorioServer(
+        address="127.0.0.1",
+        tcp_port=27200,
+        instance_id=1,
+        name="factorio_1",
+        is_active=True,
+    )
+    state = FactorioMCPState()
+    state.available_servers = {27200: record}
+    state.active_server = attached
+
+    # The pin points elsewhere; the attachment wins.
+    monkeypatch.setenv("FLE_SERVER", "factorio_2")
+    monkeypatch.setattr(
+        state_module, "RECIPES_PATH", Path("/nonexistent/recipes.jsonl")
+    )
+
+    state.gym_env
+
+    assert calls, "the environment should have been built"
+    assert calls[0]["container_name"] == "factorio_1"
+    assert calls[0]["rcon_port"] == 27200

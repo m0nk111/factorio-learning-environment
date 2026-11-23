@@ -87,6 +87,20 @@ class FactorioMCPState:
                 raise
         return self._gym_env
 
+    def observation_container(self):
+        """Container the observation environment must attach to.
+
+        Same reasoning as :meth:`observation_target`: the configured pin can
+        change while the session stays attached to its previous server, so an
+        environment built for the pin would observe a different world.
+        """
+        server = self.active_server
+        if server is not None:
+            tcp_port = getattr(server, "tcp_port", None)
+            record = self.available_servers.get(tcp_port)
+            return (getattr(record, "name", None), tcp_port)
+        return (config.server_pin_name(), config.server_pin_rcon_port())
+
     def observation_target(self):
         """World the observation environment belongs to.
 
@@ -137,13 +151,14 @@ class FactorioMCPState:
         game unless ``FLE_RESET_ON_CONNECT`` is set, and it never attaches to a
         different container than the session is pinned to.
         """
+        container_name, rcon_port = self.observation_container()
         return gym.make(
             env_id,
             disable_env_checker=True,
             run_idx=0,
             reset_on_init=config.reset_on_connect(),
-            container_name=config.server_pin_name(),
-            rcon_port=config.server_pin_rcon_port(),
+            container_name=container_name,
+            rcon_port=rcon_port,
         )
 
     def _reset_gym_env(self):
