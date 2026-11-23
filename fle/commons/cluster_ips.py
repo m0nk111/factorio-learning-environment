@@ -30,13 +30,14 @@ class FactorioContainer:
     name: str
     container_id: str
     address: str
-    udp_port: int
     tcp_port: int
+    udp_port: Optional[int] = None
 
     def describe(self) -> str:
+        game_port = self.udp_port if self.udp_port is not None else "none"
         return (
             f"{self.name} (address={self.address} "
-            f"rcon_port={self.tcp_port} game_port={self.udp_port})"
+            f"rcon_port={self.tcp_port} game_port={game_port})"
         )
 
 
@@ -88,10 +89,12 @@ def list_factorio_containers() -> List[FactorioContainer]:
         ports = container_info["NetworkSettings"]["Ports"]
         udp_port = _published_port(ports, "udp", INTERNAL_GAME_PORT)
         tcp_port = _published_port(ports, "tcp", INTERNAL_RCON_PORT)
-        if udp_port is None or tcp_port is None:
-            # Not a game server we can talk to (no published game or RCON port).
+        if tcp_port is None:
+            # No RCON endpoint: nothing this process can talk to. A container
+            # that publishes RCON but no game port is still usable (headless
+            # servers), so only the missing RCON port is disqualifying.
             print(
-                f"Skipping container {container_id}: no published game/RCON port",
+                f"Skipping container {container_id}: no published RCON port",
                 file=sys.stderr,
             )
             continue
@@ -102,12 +105,13 @@ def list_factorio_containers() -> List[FactorioContainer]:
                 # The published host port is what we connect to; containers are
                 # published on loopback by the cluster launcher.
                 address="127.0.0.1",
-                udp_port=udp_port,
                 tcp_port=tcp_port,
+                udp_port=udp_port,
             )
         )
 
-    containers.sort(key=lambda c: (c.udp_port, c.tcp_port))
+    # Game-port order first (historical index order), RCON-only containers last.
+    containers.sort(key=lambda c: (c.udp_port is None, c.udp_port or 0, c.tcp_port))
     return containers
 
 
@@ -117,13 +121,17 @@ def get_local_container_ips() -> tuple[List[str], List[int], List[int]]:
     Returns parallel lists of address, game (UDP) port and RCON (TCP) port. Use
     :func:`list_factorio_containers` when you need to know *which* container you
     are about to address.
+
+    A container that publishes RCON but no game port is still returned, with
+    ``-1`` in the game-port list: the game port is only needed for clients that
+    join as players.
     """
     containers = list_factorio_containers()
     if not containers:
         return [], [], []
     return (
         [c.address for c in containers],
-        [c.udp_port for c in containers],
+        [c.udp_port if c.udp_port is not None else -1 for c in containers],
         [c.tcp_port for c in containers],
     )
 
@@ -136,10 +144,11 @@ def format_candidates(containers: Iterable) -> str:
         extra = ""
         if hasattr(container, "is_active") and not container.is_active:
             extra = " active=False"
+        udp_port = getattr(container, "udp_port", None)
         lines.append(
             f"  - {name} (address={container.address} "
             f"rcon_port={container.tcp_port} "
-            f"game_port={getattr(container, 'udp_port', None)}{extra})"
+            f"game_port={udp_port if udp_port is not None else 'none'}{extra})"
         )
     return "\n".join(lines) if lines else "  (none)"
 

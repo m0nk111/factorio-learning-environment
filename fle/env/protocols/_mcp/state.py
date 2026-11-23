@@ -174,7 +174,7 @@ class FactorioMCPState:
                 server = FactorioServer(
                     address=container.address,
                     tcp_port=int(container.tcp_port),
-                    udp_port=int(container.udp_port),
+                    udp_port=container.udp_port,
                     instance_id=instance_id,
                     name=container.name,
                     last_checked=time.time(),
@@ -183,7 +183,7 @@ class FactorioMCPState:
                 server.last_checked = time.time()
                 server.address = container.address
                 server.tcp_port = int(container.tcp_port)
-                server.udp_port = int(container.udp_port)
+                server.udp_port = container.udp_port
                 server.name = container.name
 
             # Try to verify if it's active

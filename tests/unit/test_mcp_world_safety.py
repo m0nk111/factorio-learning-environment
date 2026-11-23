@@ -22,6 +22,7 @@ RCON connection is opened, and the container scan is replaced with a fake.
 
 import asyncio
 import importlib
+import json
 import types
 from dataclasses import dataclass, field
 from typing import List
@@ -292,10 +293,7 @@ def test_unpinned_selection_logs_every_candidate(monkeypatch, capsys):
 
 
 def test_select_container_prefers_no_pin_first_candidate():
-    containers = [
-        FactorioContainer("factorio_1", "id1", "127.0.0.1", 35197, 27100),
-        FactorioContainer("factorio_2", "id2", "127.0.0.1", 35198, 27101),
-    ]
+    containers = _fake_containers()
     assert select_container(containers).name == "factorio_1"
     assert select_container(containers, name="factorio_2").tcp_port == 27101
     assert select_container(containers, rcon_port=27100).name == "factorio_1"
@@ -303,7 +301,13 @@ def test_select_container_prefers_no_pin_first_candidate():
 
 def test_select_container_reports_candidates_on_a_bad_pin():
     containers = [
-        FactorioContainer("factorio_1", "id1", "127.0.0.1", 35197, 27100),
+        FactorioContainer(
+            name="factorio_1",
+            container_id="id1",
+            address="127.0.0.1",
+            tcp_port=27100,
+            udp_port=35197,
+        )
     ]
     with pytest.raises(ContainerSelectionError) as excinfo:
         select_container(containers, rcon_port=27999)
@@ -499,8 +503,20 @@ def test_make_factorio_env_skips_task_setup_unless_provisioning(monkeypatch):
 
 def _fake_containers():
     return [
-        FactorioContainer("factorio_1", "id1", "127.0.0.1", 35197, 27100),
-        FactorioContainer("factorio_2", "id2", "127.0.0.1", 35198, 27101),
+        FactorioContainer(
+            name="factorio_1",
+            container_id="id1",
+            address="127.0.0.1",
+            tcp_port=27100,
+            udp_port=35197,
+        ),
+        FactorioContainer(
+            name="factorio_2",
+            container_id="id2",
+            address="127.0.0.1",
+            tcp_port=27101,
+            udp_port=35198,
+        ),
     ]
 
 
@@ -575,3 +591,85 @@ def test_unreachable_candidate_writes_nothing_to_stdout(monkeypatch, capsys):
     assert len(servers) == len(CANDIDATES)
     assert all(not server.is_active for server in servers)
     assert all(server.system_response for server in servers)
+
+
+def test_direct_factory_rejects_an_invalid_pin(monkeypatch, tmp_path):
+    """rcon_port=0 is an invalid pin, not an absent one."""
+    registry_module, spec = _gym_spec()
+
+    class _Instance:
+        def __init__(self, **kwargs):
+            raise AssertionError("an invalid pin must not attach to anything")
+
+    monkeypatch.setattr(registry_module, "FactorioInstance", _Instance)
+    monkeypatch.setattr(
+        registry_module, "list_factorio_containers", lambda: _fake_containers()
+    )
+    monkeypatch.setenv("FACTORIO_SERVER_ADDRESS", "127.0.0.1")
+    monkeypatch.setenv("FACTORIO_SERVER_PORT", "27100")
+
+    with pytest.raises(ValueError, match="rcon_port"):
+        registry_module.make_factorio_env(spec, 0, rcon_port=0)
+    with pytest.raises(ValueError, match="rcon_port"):
+        registry_module.make_factorio_env(spec, 0, rcon_port=70000)
+
+
+def test_rcon_only_container_is_still_discoverable(monkeypatch):
+    """A headless container publishing only RCON must not disappear."""
+    from fle.commons import cluster_ips
+
+    def fake_run(cmd, capture_output=True, text=True):
+        if "ps" in cmd:
+            return types.SimpleNamespace(stdout='"abc123"\n', stderr="", returncode=0)
+        return types.SimpleNamespace(
+            stdout=json.dumps(
+                [
+                    {
+                        "Name": "/factorio_headless",
+                        "NetworkSettings": {
+                            "Ports": {"27015/tcp": [{"HostPort": "27100"}]}
+                        },
+                    }
+                ]
+            ),
+            stderr="",
+            returncode=0,
+        )
+
+    monkeypatch.setattr(cluster_ips.subprocess, "run", fake_run)
+
+    containers = cluster_ips.list_factorio_containers()
+    assert len(containers) == 1
+    assert containers[0].name == "factorio_headless"
+    assert containers[0].tcp_port == 27100
+    assert containers[0].udp_port is None
+
+    # The historical contract keeps a placeholder in the game-port list.
+    ips, udp_ports, tcp_ports = cluster_ips.get_local_container_ips()
+    assert (ips, udp_ports, tcp_ports) == (["127.0.0.1"], [-1], [27100])
+
+
+def test_scan_handles_a_container_without_a_game_port(monkeypatch):
+    """The scan and its logging must tolerate udp_port=None."""
+    from fle.commons.cluster_ips import FactorioContainer
+
+    cluster, state = _install_fake_cluster(monkeypatch)
+    monkeypatch.setattr(
+        state_module,
+        "list_factorio_containers",
+        lambda: [
+            FactorioContainer(
+                name="factorio_headless",
+                container_id="id1",
+                address="127.0.0.1",
+                tcp_port=27100,
+            )
+        ],
+    )
+
+    servers = asyncio.run(state.scan_for_servers())
+
+    assert len(servers) == 1
+    assert servers[0].tcp_port == 27100
+    assert servers[0].udp_port is None
+    assert servers[0].name == "factorio_headless"

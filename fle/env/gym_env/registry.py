@@ -136,12 +136,19 @@ def make_factorio_env(
     address = os.getenv("FACTORIO_SERVER_ADDRESS")
     tcp_port = os.getenv("FACTORIO_SERVER_PORT")
 
-    if container_name or rcon_port:
+    if container_name is not None or rcon_port is not None:
         # An explicit pin is authoritative: it must not be silently overridden by
         # FACTORIO_SERVER_ADDRESS/PORT, or a provisioning run would reset a world
-        # the caller did not select.
+        # the caller did not select. Tested against None, not truthiness: a pin of
+        # 0 (or "") is invalid input, not an absent pin.
+        if rcon_port is not None and not 0 < int(rcon_port) < 65536:
+            raise ValueError(
+                f"rcon_port must be a valid port number, got {rcon_port!r}"
+            )
         pinned = select_container(
-            list_factorio_containers(), name=container_name, rcon_port=rcon_port
+            list_factorio_containers(),
+            name=container_name,
+            rcon_port=None if rcon_port is None else int(rcon_port),
         )
         if (address and address != pinned.address) or (
             tcp_port and int(tcp_port) != pinned.tcp_port
