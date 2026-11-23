@@ -939,3 +939,44 @@ def test_a_failed_attach_keeps_the_previous_attachment(monkeypatch):
     assert state.active_server is previous
     assert server.connected is False
     assert cleaned == ["cleanup"]
+
+
+def test_a_missing_recipe_dump_does_not_fail_the_attach():
+    """The recipe dump is generated data; its absence must not break a session.
+
+    It used to raise FileNotFoundError through ``connect_to_server`` (after the
+    connection was already attached, where the leaked state hid the failure), and
+    its fallback pointed at a macOS path belonging to the upstream author.
+    """
+
+    state = FactorioMCPState()
+
+    assert state.load_recipes_from_file() == {}
+    assert state.recipes == {}
+
+
+def test_the_attach_survives_a_missing_recipe_dump(monkeypatch):
+    """An otherwise healthy attach must succeed without a recipe dump."""
+
+    instance = _RecordingInstance(name="srv")
+
+    server = state_module.FactorioServer(
+        address="127.0.0.1", tcp_port=27200, instance_id=1, name="srv", is_active=True
+    )
+    state = FactorioMCPState()
+    state.available_servers = {1: server}
+
+    monkeypatch.setattr(state, "create_factorio_instance", lambda instance_id: instance)
+
+    async def refreshes(instance_id):
+        return None
+
+    monkeypatch.setattr(state, "refresh_game_data", refreshes)
+    monkeypatch.setattr(
+        state_module, "FactorioMCPRepository", lambda active: types.SimpleNamespace()
+    )
+
+    assert asyncio.run(state.connect_to_server(1)) is True
+    assert state.active_server is instance
+    assert server.connected is True
+    assert state.recipes == {}

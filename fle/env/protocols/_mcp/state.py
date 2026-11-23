@@ -332,10 +332,15 @@ class FactorioMCPState:
         )
 
         if not recipes_path.exists():
-            # Fall back to absolute path if relative path fails
-            recipes_path = Path(
-                "/Users/jackhopkins/PycharmProjects/PaperclipMaximiser/data/recipes/recipes.jsonl"
+            # The recipe dump is generated data (gitignored), so it can legitimately
+            # be absent. It powers the recipe resources only; a missing file must not
+            # fail the attach, and the upstream author's local macOS path is not a
+            # fallback that can ever resolve here.
+            _diag(
+                f"No recipe dump at {recipes_path}; recipe resources stay empty "
+                "until one is generated"
             )
+            return {}
 
         try:
             recipes = {}
