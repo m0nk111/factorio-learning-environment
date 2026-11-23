@@ -21,6 +21,7 @@ _MISSING = object()
 ADDRESS = "127.0.0.1"
 PORT_A = 27100  # host port the session is attached to
 PORT_B = 27200  # host port the container publishes after it was recreated
+PORT_C = 27300  # a second container of the same cluster
 
 
 async def _stub_initialize_session(ctx=None) -> str:
@@ -385,3 +386,41 @@ def test_create_factorio_instance_takes_an_explicit_or_discovered_endpoint(
 
     with pytest.raises(IndexError):
         catalogue.real_factory(3)
+
+
+def test_reconnect_keeps_the_session_on_its_endpoint_when_ids_shift(harness):
+    catalogue = harness(FakeCluster([PORT_A, PORT_B, PORT_C]))
+
+    # Session attached to the second of three containers (instance id 1).
+    stale_instance = catalogue.cluster.create_instance(1, ADDRESS, PORT_B)
+    catalogue.state.active_server = stale_instance
+    catalogue.state.available_servers = {
+        server_id: catalogue.models.FactorioServer(
+            address=ADDRESS,
+            tcp_port=port,
+            instance_id=server_id,
+            name=f"Factorio Server {server_id + 1}",
+            connected=True,
+            is_active=True,
+        )
+        for server_id, port in enumerate([PORT_A, PORT_B, PORT_C])
+    }
+
+    # The first container disappears, so discovery re-enumerates the survivors:
+    # instance id 1 is now the third container.
+    catalogue.cluster.tcp_ports = [PORT_B, PORT_C]
+
+    report = catalogue.reconnect()
+
+    active = catalogue.state.active_server
+    assert (active.address, active.tcp_port) == (ADDRESS, PORT_B), (
+        "the session must stay on the endpoint it was attached to"
+    )
+    assert [
+        server.tcp_port for server in catalogue.state.available_servers.values()
+    ] == [
+        PORT_B,
+        PORT_C,
+    ]
+    assert f"({ADDRESS}:{PORT_B})" in report
+    assert f":{PORT_C}" not in report

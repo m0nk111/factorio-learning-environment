@@ -55,6 +55,27 @@ def close_rcon_client(instance) -> None:
         log_info(f"Ignoring error while closing the stale RCON client: {error}")
 
 
+def server_preference_order(
+    servers: Dict[int, FactorioServer],
+    endpoint: Optional[tuple],
+    attached_server_id: Optional[int],
+) -> List[int]:
+    """Order discovery results: same endpoint first, then the same instance id.
+
+    Instance ids are positional, so a container that disappears shifts every id
+    after it; matching the endpoint first keeps the session on the world it was
+    working in.
+    """
+
+    def rank(server_id: int) -> int:
+        server = servers[server_id]
+        if endpoint is not None and (server.address, server.tcp_port) == endpoint:
+            return 0
+        return 1 if server_id == attached_server_id else 2
+
+    return sorted(servers, key=rank)
+
+
 def previous_server_id() -> Optional[int]:
     """Instance id of the server this session is attached to, when it is known."""
     active_server = state.active_server
@@ -202,6 +223,11 @@ async def reconnect() -> str:
     host ports.
     """
     attached_server_id = previous_server_id()
+    attached_endpoint = (
+        None
+        if state.active_server is None
+        else (state.active_server.address, state.active_server.tcp_port)
+    )
 
     try:
         servers = discover_servers()
@@ -223,12 +249,7 @@ async def reconnect() -> str:
     state.active_server = None
     state.available_servers = servers
 
-    # Retry the server the session was attached to first, then any other container
-    # that discovery reported.
-    server_ids: List[int] = sorted(servers)
-    if attached_server_id in servers:
-        server_ids.remove(attached_server_id)
-        server_ids.insert(0, attached_server_id)
+    server_ids = server_preference_order(servers, attached_endpoint, attached_server_id)
 
     failures = []
     for server_id in server_ids:
