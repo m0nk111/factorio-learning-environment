@@ -77,7 +77,16 @@ CANDIDATES = [
     _Candidate("factorio_2", 27101, 35198),
 ]
 
-PINS = ("FLE_SERVER", "FLE_RCON_PORT", "FLE_RESET_ON_CONNECT", "FLE_RESET_ON_SHUTDOWN")
+PINS = (
+    "FLE_SERVER",
+    "FLE_RCON_PORT",
+    "FLE_RESET_ON_CONNECT",
+    "FLE_RESET_ON_SHUTDOWN",
+    # The session also honours these; a value inherited from the shell would
+    # make these tests depend on the invoking environment.
+    "FACTORIO_SERVER_ADDRESS",
+    "FACTORIO_SERVER_PORT",
+)
 
 
 class _FakeCluster:
@@ -829,3 +838,37 @@ def test_conflicting_explicit_target_fails_before_any_probe(monkeypatch):
     message = asyncio.run(session_module.initialize_session())
     assert cluster.connections == [1]
     assert "Connected to Factorio server factorio_2" in message
+
+
+def test_a_failed_provisioning_is_not_cached(monkeypatch):
+    """A reset that raises must leave no ready-looking environment behind."""
+    state = FactorioMCPState()
+    built = []
+
+    class _Env:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    state._make_gym_env = lambda env_id: built.append(_Env()) or built[-1]
+
+    attempts = []
+
+    def reset_that_fails_once():
+        attempts.append(True)
+        if len(attempts) == 1:
+            raise RuntimeError("provisioning failed")
+
+    monkeypatch.setattr(state, "_reset_gym_env", reset_that_fails_once)
+    monkeypatch.setenv("FLE_RESET_ON_CONNECT", "1")
+
+    with pytest.raises(RuntimeError, match="provisioning failed"):
+        state.gym_env
+    assert state._gym_env is None, "the failed environment must not stay cached"
+    assert built[0].closed
+
+    env = state.gym_env  # retries and succeeds
+    assert env is built[-1]
+    assert len(built) == 2

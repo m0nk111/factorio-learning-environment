@@ -70,7 +70,13 @@ class FactorioMCPState:
         if self._gym_env is None:
             self._gym_env = self._make_gym_env(self.gym_env_id)
             self._gym_env_target = target
-            self._reset_gym_env()
+            try:
+                self._reset_gym_env()
+            except Exception:
+                # A half-initialised environment must not stay cached: the next
+                # access has to retry rather than treat it as ready.
+                self.close_gym_env()
+                raise
         return self._gym_env
 
     def close_gym_env(self):
