@@ -16,6 +16,13 @@ for explicitly.
     Pin the target container by published host RCON port instead of (or
     together with) the name.
 
+``FLE_RCON_HOST``
+    Address an RCON endpoint that is not a docker container at all — a natively
+    run server such as a campaign. Together with ``FLE_RCON_PORT`` it names the
+    endpoint directly and container discovery is skipped entirely, so a session
+    can attach to the same running world another toolset is already playing.
+    ``FLE_RCON_PASSWORD`` supplies the password (default ``factorio``).
+
 ``FLE_RESET_ON_CONNECT``
     Provision the world when a session attaches: reset game state, clear
     entities around the agents and apply the starting inventory. Default ``0``.
@@ -27,10 +34,13 @@ for explicitly.
 import os
 from typing import Optional
 
+from fle.commons import local_settings
+
 EXPLICIT_ADDRESS_ENV = "FACTORIO_SERVER_ADDRESS"
 EXPLICIT_PORT_ENV = "FACTORIO_SERVER_PORT"
 SERVER_PIN_ENV = "FLE_SERVER"
 RCON_PORT_PIN_ENV = "FLE_RCON_PORT"
+RCON_HOST_PIN_ENV = "FLE_RCON_HOST"
 RESET_ON_CONNECT_ENV = "FLE_RESET_ON_CONNECT"
 RESET_ON_SHUTDOWN_ENV = "FLE_RESET_ON_SHUTDOWN"
 
@@ -72,8 +82,52 @@ def server_pin_name() -> Optional[str]:
 
 
 def server_pin_rcon_port() -> Optional[int]:
-    """Published host RCON port the session must attach to, or None."""
-    return _env_port(RCON_PORT_PIN_ENV)
+    """Published host RCON port the session must attach to, or None.
+
+    Falls back to the local settings file so a machine can name its endpoint once
+    instead of exporting variables for every session.
+    """
+    port = _env_port(RCON_PORT_PIN_ENV)
+    if port is not None:
+        return port
+    configured = local_settings.value("rcon_port")
+    if configured is None:
+        return None
+    try:
+        port = int(configured)
+    except (TypeError, ValueError):
+        raise ValueError(
+            f"rcon_port in {local_settings.settings_path()} must be an integer, "
+            f"got {configured!r}"
+        ) from None
+    if not 0 < port < 65536:
+        raise ValueError(
+            f"rcon_port in {local_settings.settings_path()} must be a valid port, "
+            f"got {configured!r}"
+        )
+    return port
+
+
+def server_pin_host() -> Optional[str]:
+    """Host of a direct RCON endpoint, bypassing container discovery."""
+    raw = os.environ.get(RCON_HOST_PIN_ENV)
+    if raw is not None and raw.strip() != "":
+        return raw.strip()
+    configured = local_settings.value("rcon_host")
+    return str(configured) if configured is not None else None
+
+
+def direct_rcon_endpoint() -> Optional[tuple[str, int]]:
+    """The pinned ``(host, port)`` when it does not depend on docker.
+
+    Returns None unless **both** are set: a host without a port cannot address a
+    server, and a port alone is still resolved against the container list.
+    """
+    host = server_pin_host()
+    port = server_pin_rcon_port()
+    if host is None or port is None:
+        return None
+    return host, port
 
 
 def explicit_target_conflict(address: str, rcon_port: int) -> Optional[str]:

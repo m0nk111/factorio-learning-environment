@@ -7,6 +7,7 @@ from typing import Dict, List, Optional, Any
 from fle.env import FactorioInstance
 from fle.commons.cluster_ips import (
     ContainerSelectionError,
+    FactorioContainer,
     get_local_container_ips,
     list_factorio_containers,
     select_container,
@@ -291,7 +292,31 @@ class FactorioMCPState:
         session never opens a connection to another container merely to find out
         whether it is alive; an unresolvable pin raises with the candidates.
         """
-        containers = list_factorio_containers()
+        direct = config.direct_rcon_endpoint()
+        if direct is not None:
+            # A direct endpoint is not a container: another process owns that
+            # server (a campaign, say) and discovery would never find it. Build
+            # the single record from the pin and let everything below treat it
+            # like any other candidate.
+            host, port = direct
+            containers = [
+                FactorioContainer(
+                    name=f"{host}:{port}",
+                    container_id=f"direct:{host}:{port}",
+                    address=host,
+                    tcp_port=port,
+                    udp_port=None,
+                )
+            ]
+            if config.server_pin_name() is not None:
+                raise ContainerSelectionError(
+                    f"Conflicting Factorio target: {config.RCON_HOST_PIN_ENV}="
+                    f"{host!r} attaches to an endpoint directly, so "
+                    f"{config.SERVER_PIN_ENV}={config.server_pin_name()!r} cannot "
+                    "name a container as well. Unset one of the two."
+                )
+        else:
+            containers = list_factorio_containers()
 
         target = None
         if (

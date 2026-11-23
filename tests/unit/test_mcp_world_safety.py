@@ -46,6 +46,7 @@ from fle.commons.cluster_ips import (  # noqa: E402
     select_container,
 )
 from fle.env.protocols._mcp import config  # noqa: E402
+from fle.env.protocols._mcp import config as config_module  # noqa: E402
 from fle.env.protocols._mcp import init as session_module  # noqa: E402
 from fle.env.protocols._mcp.state import FactorioMCPState  # noqa: E402
 
@@ -1703,3 +1704,86 @@ def test_a_failing_probe_cleanup_does_not_abort_the_scan(monkeypatch):
 
     assert len(servers) == 1
     assert servers[0].is_active is True, "the probe succeeded; cleanup must not undo it"
+
+
+def test_direct_endpoint_attaches_without_container_discovery(monkeypatch):
+    """A natively run server is addressable when host and port are both pinned.
+
+    Container discovery cannot find it, so a session that only knows docker
+    would report "no Factorio containers are running" for a world that is
+    perfectly reachable — and another toolset may already be playing it.
+    """
+    cluster, state = _install_fake_cluster(monkeypatch)
+    monkeypatch.setattr(
+        state_module,
+        "list_factorio_containers",
+        lambda: pytest.fail("a direct endpoint must not touch docker discovery"),
+    )
+    monkeypatch.setenv("FLE_RCON_HOST", "127.0.0.1")
+    monkeypatch.setenv("FLE_RCON_PORT", "34199")
+    monkeypatch.delenv("FLE_SERVER", raising=False)
+
+    message = asyncio.run(session_module.initialize_session())
+
+    assert cluster.probes == [("127.0.0.1", 34199)], cluster.probes
+    assert cluster.connections == [0], cluster.connections
+    server = state.available_servers[0]
+    assert (server.address, server.tcp_port) == ("127.0.0.1", 34199)
+    assert "34199" in message
+
+
+def test_a_host_without_a_port_still_uses_container_discovery(monkeypatch):
+    """Half an endpoint is not an endpoint: the port may still name a container."""
+    cluster, state = _install_fake_cluster(monkeypatch)
+    monkeypatch.setenv("FLE_RCON_HOST", "127.0.0.1")
+    monkeypatch.delenv("FLE_RCON_PORT", raising=False)
+
+    asyncio.run(session_module.initialize_session())
+
+    assert state.available_servers[0].name == "factorio_1"
+    assert config_module.direct_rcon_endpoint() is None
+
+
+def test_a_host_pin_and_a_name_pin_cannot_be_combined(monkeypatch):
+    cluster, state = _install_fake_cluster(monkeypatch)
+    monkeypatch.setenv("FLE_RCON_HOST", "127.0.0.1")
+    monkeypatch.setenv("FLE_RCON_PORT", "34199")
+    monkeypatch.setenv("FLE_SERVER", "factorio_1")
+
+    message = asyncio.run(session_module.initialize_session())
+
+    assert "Initialization failed" in message
+    assert "cannot name a container as well" in message
+    assert cluster.connections == [], "nothing may attach on a contradictory pin"
+
+
+def test_local_settings_name_the_endpoint_without_environment(monkeypatch, tmp_path):
+    """A machine names its endpoint once; sessions need no exported variables."""
+    settings = tmp_path / "mcp.json"
+    settings.write_text('{"rcon_host": "10.0.0.5", "rcon_port": 34199}')
+    monkeypatch.setenv("FLE_LOCAL_SETTINGS", str(settings))
+    monkeypatch.delenv("FLE_RCON_HOST", raising=False)
+    monkeypatch.delenv("FLE_RCON_PORT", raising=False)
+
+    assert config_module.direct_rcon_endpoint() == ("10.0.0.5", 34199)
+
+
+def test_the_environment_still_wins_over_the_settings_file(monkeypatch, tmp_path):
+    settings = tmp_path / "mcp.json"
+    settings.write_text('{"rcon_host": "10.0.0.5", "rcon_port": 34199}')
+    monkeypatch.setenv("FLE_LOCAL_SETTINGS", str(settings))
+    monkeypatch.setenv("FLE_RCON_HOST", "127.0.0.1")
+    monkeypatch.setenv("FLE_RCON_PORT", "27200")
+
+    assert config_module.direct_rcon_endpoint() == ("127.0.0.1", 27200)
+
+
+def test_a_malformed_settings_file_says_so(monkeypatch, tmp_path):
+    settings = tmp_path / "mcp.json"
+    settings.write_text("{not json")
+    monkeypatch.setenv("FLE_LOCAL_SETTINGS", str(settings))
+    monkeypatch.delenv("FLE_RCON_HOST", raising=False)
+    monkeypatch.delenv("FLE_RCON_PORT", raising=False)
+
+    with pytest.raises(ValueError, match="not valid JSON"):
+        config_module.direct_rcon_endpoint()
