@@ -65,11 +65,14 @@ class FactorioMCPState:
     def gym_env(self):
         """Observation environment for this session, created on first use.
 
-        A cached environment is only reused for the target it was built for: a
-        session reused for another container (``FLE_SERVER`` changed between
-        sessions) must not keep observing the previous world.
+        A cached environment is only reused for the world it was built for. The
+        key is the attached server, not the configuration: the pin can change
+        while a session keeps its previous attachment (a failed re-attach rolls
+        back to the old server), and observations must follow the world the
+        session is actually attached to. Before the first attach the
+        configuration is the only available target.
         """
-        target = (config.server_pin_name(), config.server_pin_rcon_port())
+        target = self.observation_target()
         if self._gym_env is not None and self._gym_env_target != target:
             self.close_gym_env()
         if self._gym_env is None:
@@ -83,6 +86,20 @@ class FactorioMCPState:
                 self.close_gym_env()
                 raise
         return self._gym_env
+
+    def observation_target(self):
+        """World the observation environment belongs to.
+
+        Bound to the active attachment so a failed re-attach that restored the
+        previous server cannot leave observations pointed at a different world.
+        """
+        server = self.active_server
+        if server is not None:
+            return (
+                getattr(server, "address", None),
+                getattr(server, "tcp_port", None),
+            )
+        return (config.server_pin_name(), config.server_pin_rcon_port())
 
     def close_gym_env(self):
         """Drop the cached observation environment (its own RCON connection)."""

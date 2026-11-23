@@ -1073,9 +1073,9 @@ def test_a_failed_attach_discards_a_replacement_observation_env(tmp_path, monkey
     )
     state = FactorioMCPState()
     state.available_servers = {1: server}
-    # A cached environment built for the unpinned target.
+    # A cached environment built for a previous attachment.
     state._gym_env = make_env("preexisting")
-    state._gym_env_target = (None, None)
+    state._gym_env_target = ("127.0.0.1", 27100)
 
     monkeypatch.setenv("FLE_RESET_ON_CONNECT", "1")
     monkeypatch.setenv("FLE_SERVER", "factorio_other")
@@ -1100,3 +1100,59 @@ def test_a_failed_attach_discards_a_replacement_observation_env(tmp_path, monkey
         "the replacement created by the failed attach must be closed"
     )
     assert state._gym_env is None
+
+
+def test_a_failed_reattach_does_not_repoint_observations(tmp_path, monkeypatch):
+    """A failed re-attach keeps observing the world the session is attached to.
+
+    Changing the pin and failing to attach elsewhere used to leave the
+    observation environment keyed on the new pin, so the session read one world
+    and acted on another.
+    """
+
+    built = []
+
+    class _FakeEnv:
+        def __init__(self):
+            self.window = None
+
+        def reset(self, *args, **kwargs):
+            return None
+
+        def close(self):
+            return None
+
+    def make_env(env_id):
+        env = _FakeEnv()
+        built.append(env)
+        return env
+
+    attached = _RecordingInstance(name="factorio_1")
+    attached.address = "127.0.0.1"
+    attached.tcp_port = 27200
+    server = state_module.FactorioServer(
+        address="127.0.0.1", tcp_port=27200, instance_id=1, name="srv", is_active=True
+    )
+    state = FactorioMCPState()
+    state.available_servers = {1: server}
+    state.active_server = attached
+
+    # An environment already observing the attached world.
+    monkeypatch.setattr(state, "_make_gym_env", make_env)
+    observed_first = state.gym_env
+    observed_target = state._gym_env_target
+
+    monkeypatch.setenv("FLE_SERVER", "factorio_2")
+    monkeypatch.setattr(state_module, "RECIPES_PATH", tmp_path / "recipes.jsonl")
+    monkeypatch.setenv("FLE_RESET_ON_CONNECT", "1")
+
+    def failing_factory(instance_id):
+        raise RuntimeError("cannot attach to the pinned server")
+
+    monkeypatch.setattr(state, "create_factorio_instance", failing_factory)
+
+    assert asyncio.run(state.connect_to_server(1)) is False
+    assert state.active_server is attached
+    assert state.observation_target() == ("127.0.0.1", 27200)
+    assert state.gym_env is observed_first, "observations must not move to the new pin"
+    assert state._gym_env_target == observed_target
