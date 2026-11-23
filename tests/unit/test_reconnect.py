@@ -126,11 +126,15 @@ class FakeCluster:
 class Harness:
     """Real ``tools`` module wired to a fake container cluster."""
 
-    def __init__(self, tools, state, models, cluster: FakeCluster, monkeypatch) -> None:
+    def __init__(
+        self, tools, state, models, cluster: FakeCluster, real_factory, monkeypatch
+    ) -> None:
         self.tools = tools
         self.state = state
         self.models = models
         self.cluster = cluster
+        # The shipped method, so the endpoint parameters are covered as well.
+        self.real_factory = real_factory
 
         monkeypatch.setattr(
             tools,
@@ -146,6 +150,22 @@ class Harness:
 
     def execute(self, code: str) -> str:
         return asyncio.run(self.tools.execute(code))
+
+
+def _mcp_module_names():
+    return {
+        name
+        for name in sys.modules
+        if name == MCP_PACKAGE or name.startswith(MCP_PACKAGE + ".")
+    }
+
+
+@pytest.fixture(scope="module", autouse=True)
+def mcp_modules_are_restored():
+    """The stubbed import must leave ``sys.modules`` exactly as it found it."""
+    before = _mcp_module_names()
+    yield
+    assert _mcp_module_names() == before
 
 
 @pytest.fixture()
@@ -177,7 +197,11 @@ def harness(monkeypatch):
         stub_init.log_info = lambda message: None
         stub_init.initialize_session = _stub_initialize_session
         stub_init.shutdown_session = _stub_shutdown_session
-        monkeypatch.setitem(sys.modules, MCP_PACKAGE + ".init", stub_init)
+        # Deliberately not monkeypatch.setitem: monkeypatch records the key as
+        # absent (it was purged above) and would delete the restored original
+        # package module when it undoes itself. sys.modules is restored by hand
+        # in this fixture's teardown instead.
+        sys.modules[MCP_PACKAGE + ".init"] = stub_init
 
         state_module = importlib.import_module(MCP_PACKAGE + ".state")
         monkeypatch.setattr(state_module, "FactorioMCPRepository", FakeRepository)
@@ -194,7 +218,10 @@ def harness(monkeypatch):
         monkeypatch.setattr(tools, "log_info", lambda message: None, raising=False)
 
         models = importlib.import_module(MCP_PACKAGE + ".models")
-        return Harness(tools, state, models, cluster, monkeypatch)
+        real_factory = types.MethodType(
+            state_module.FactorioMCPState.create_factorio_instance, state
+        )
+        return Harness(tools, state, models, cluster, real_factory, monkeypatch)
 
     yield _build
 
@@ -295,3 +322,42 @@ def test_timeouts_are_not_treated_as_a_lost_connection(harness):
     # A code timeout must not trigger a second, equally slow execution attempt.
     assert catalogue.tools.is_lost_rcon_connection(object(), TimeoutError()) is False
     assert catalogue.tools.is_lost_rcon_connection(object(), ConnectionError()) is True
+
+
+def test_create_factorio_instance_takes_an_explicit_or_discovered_endpoint(
+    harness, monkeypatch
+):
+    catalogue = harness(FakeCluster([PORT_A]))
+    state_module = sys.modules[MCP_PACKAGE + ".state"]
+
+    built = []
+
+    class FakeFactorioInstance:
+        def __init__(self, address, tcp_port, **kwargs):
+            built.append((address, tcp_port, kwargs))
+            self.address = address
+            self.tcp_port = tcp_port
+            self.rcon_client = FakeRconClient(tcp_port)
+
+        def set_speed(self, speed):
+            self.speed = speed
+
+    discoveries = []
+
+    def discover():
+        discoveries.append(True)
+        return [ADDRESS], [PORT_A - 1000], [PORT_A]
+
+    monkeypatch.setattr(state_module, "FactorioInstance", FakeFactorioInstance)
+    monkeypatch.setattr(state_module, "get_local_container_ips", discover)
+
+    explicit = catalogue.real_factory(0, address=ADDRESS, tcp_port=PORT_B)
+    assert (explicit.address, explicit.tcp_port) == (ADDRESS, PORT_B)
+    assert discoveries == [], "an explicit endpoint must skip discovery"
+
+    discovered = catalogue.real_factory(0)
+    assert (discovered.address, discovered.tcp_port) == (ADDRESS, PORT_A)
+    assert discoveries == [True], "the one-argument form must still discover"
+
+    with pytest.raises(IndexError):
+        catalogue.real_factory(3)

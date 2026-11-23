@@ -104,6 +104,12 @@ async def execute(code: str) -> str:
 
     If you need to debug an error message, use the introspection tools (e.g `cat`) to analyse the *.lua and *.py implementations.
 
+    When the RCON connection to the server is lost while running the code, the
+    code is retried once against a freshly discovered container before the error
+    is reported. A script that already changed the world before the socket died
+    can therefore run twice, so keep mutations idempotent when the server may
+    have been recreated.
+
     Args:
         code: Python code to execute
     """
