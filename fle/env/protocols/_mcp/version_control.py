@@ -9,8 +9,30 @@ Provides functionality for managing game state versions, including:
 """
 
 from fle.commons.models.game_state import GameState
-from fle.env.protocols._mcp import mcp
+from fle.env.protocols._mcp import config, mcp
 from fle.env.protocols._mcp.init import state
+
+
+def _foreign_world_refusal(tool: str) -> str:
+    """Refuse a world-resetting tool when this session attached to someone's world.
+
+    ``undo`` and ``restore`` do not merely edit entities: they call
+    ``instance.reset(game_state=...)``, which rewrites the whole world from a
+    snapshot. That is fine in a sandbox this session provisioned, and ruinous on a
+    world another toolset is playing — so a session that reached its target through
+    an explicit ``FLE_RCON_HOST`` endpoint must not reset it, whatever the history
+    says.
+    """
+    if config.direct_rcon_endpoint() is None:
+        return ""
+    return (
+        f"Refusing to run {tool}: this session is attached to an existing world it "
+        "does not own "
+        f"({config.RCON_HOST_PIN_ENV}={config.server_pin_host()}:"
+        f"{config.server_pin_rcon_port()}). Resetting it to a snapshot would destroy "
+        "the work of whoever is playing there. Use execute for changes, and undo "
+        "them with the opposite operation instead."
+    )
 
 
 @mcp.tool()
@@ -24,6 +46,10 @@ async def undo() -> str:
     vcs = state.get_vcs()
     if not vcs:
         return "VCS not initialized. Please connect to a server first."
+
+    refusal = _foreign_world_refusal("undo")
+    if refusal:
+        return refusal
 
     prev_commit_id = vcs.undo()
     if not prev_commit_id:
@@ -80,6 +106,10 @@ async def restore(ref: str) -> str:
     vcs = state.get_vcs()
     if not vcs:
         return "VCS not initialized. Please connect to a server first."
+
+    refusal = _foreign_world_refusal("restore")
+    if refusal:
+        return refusal
 
     # First check if it's a tag
     tag_commit = vcs.get_tag(ref)

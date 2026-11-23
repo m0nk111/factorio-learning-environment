@@ -49,6 +49,7 @@ from fle.env.protocols._mcp import config  # noqa: E402
 from fle.env.protocols._mcp import config as config_module  # noqa: E402
 from fle.env.protocols._mcp import init as session_module  # noqa: E402
 from fle.env.protocols._mcp.state import FactorioMCPState  # noqa: E402
+from fle.env.protocols._mcp import version_control as version_control_module  # noqa: E402
 
 # Captured at import time: the autouse guard below replaces the class attribute,
 # so a test that needs the real builder has to keep a reference to it.
@@ -1787,3 +1788,26 @@ def test_a_malformed_settings_file_says_so(monkeypatch, tmp_path):
 
     with pytest.raises(ValueError, match="not valid JSON"):
         config_module.direct_rcon_endpoint()
+
+
+def test_undo_and_restore_refuse_to_reset_a_foreign_world(monkeypatch):
+    """undo/restore call instance.reset(); on a world this session did not
+    provision that would wipe someone else's factory."""
+    monkeypatch.setenv("FLE_RCON_HOST", "127.0.0.1")
+    monkeypatch.setenv("FLE_RCON_PORT", "34199")
+
+    undo_refusal = version_control_module._foreign_world_refusal("undo")
+    restore_refusal = version_control_module._foreign_world_refusal("restore")
+
+    assert "does not own" in undo_refusal
+    assert "34199" in undo_refusal
+    assert "destroy" in restore_refusal
+    assert "Refusing to run restore" in restore_refusal
+
+
+def test_undo_is_allowed_on_a_world_this_session_owns(monkeypatch):
+    """A sandbox reached through container discovery stays fully undoable."""
+    monkeypatch.delenv("FLE_RCON_HOST", raising=False)
+    monkeypatch.delenv("FLE_RCON_PORT", raising=False)
+
+    assert version_control_module._foreign_world_refusal("undo") == ""
