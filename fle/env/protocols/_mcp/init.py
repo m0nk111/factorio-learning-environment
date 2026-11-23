@@ -127,4 +127,5 @@ async def shutdown_session():
                 log_info(f"Closing the RCON connection failed: {e}")
     finally:
         # Clear any temporary state
+        state.close_gym_env()
         state.vcs_repos.clear()

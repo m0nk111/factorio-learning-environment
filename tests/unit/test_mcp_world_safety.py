@@ -100,6 +100,19 @@ class _FakeCluster:
 
 
 @pytest.fixture(autouse=True)
+def no_live_gym_env(monkeypatch):
+    """Fail loudly instead of attaching to a real container from a unit test."""
+
+    def explode(self, env_id):
+        raise AssertionError(
+            f"a unit test must not build a live gym env (env_id={env_id!r})"
+        )
+
+    monkeypatch.setattr(FactorioMCPState, "_make_gym_env", explode)
+    yield
+
+
+@pytest.fixture(autouse=True)
 def clear_pins(monkeypatch):
     for name in PINS:
         monkeypatch.delenv(name, raising=False)
@@ -673,3 +686,91 @@ def test_scan_handles_a_container_without_a_game_port(monkeypatch):
     assert servers[0].tcp_port == 27100
     assert servers[0].udp_port is None
     assert servers[0].name == "factorio_headless"
+
+
+def test_observation_env_does_not_outlive_its_target(monkeypatch):
+    """A reused state must not keep observing the container of a past session."""
+    built = []
+
+    class _Env:
+        def __init__(self, label):
+            self.label = label
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    state = FactorioMCPState()
+    state._make_gym_env = lambda env_id: built.append(_Env(env_id)) or built[-1]
+    state._reset_gym_env = lambda: None
+
+    monkeypatch.setenv("FLE_SERVER", "factorio_1")
+    first = state.gym_env
+    assert state.gym_env is first, "the same target reuses the cached env"
+
+    monkeypatch.setenv("FLE_SERVER", "factorio_2")
+    second = state.gym_env
+    assert second is not first
+    assert first.closed, "the stale environment must be closed"
+    assert state._gym_env_target == ("factorio_2", None)
+
+    state.close_gym_env()
+    assert state._gym_env is None
+    state.close_gym_env()  # idempotent
+
+
+def test_shutdown_closes_the_observation_environment():
+    state = session_module.state
+    state._gym_env = types.SimpleNamespace(closed=False)
+
+    class _Env:
+        def close(self):
+            state._gym_env.closed = True
+
+    state._gym_env = _Env()
+    session_module.state.active_server = None
+    asyncio.run(session_module.shutdown_session())
+
+    assert session_module.state._gym_env is None
+
+
+def test_lab_mode_builds_the_observation_env_at_connect_time(monkeypatch):
+    """With provisioning on, the world is prepared during attach, not later."""
+    touched = []
+
+    def prepare(mode_env):
+        state = FactorioMCPState()
+        state.available_servers[0] = types.SimpleNamespace(
+            address="127.0.0.1", tcp_port=27100, is_active=True, instance_id=0
+        )
+        monkeypatch.setattr(
+            state, "create_factorio_instance", lambda instance_id: object()
+        )
+
+        async def refresh(instance_id):
+            return True
+
+        monkeypatch.setattr(state, "refresh_game_data", refresh)
+        monkeypatch.setattr(state, "load_recipes_from_file", lambda: {"x": 1})
+        monkeypatch.setattr(
+            FactorioMCPState,
+            "gym_env",
+            property(lambda self: touched.append("built") or types.SimpleNamespace()),
+        )
+        monkeypatch.setattr(
+            state_module, "FactorioMCPRepository", lambda instance: object()
+        )
+        return state
+
+    monkeypatch.setenv("FLE_RESET_ON_CONNECT", "1")
+    assert asyncio.run(prepare("lab").connect_to_server(0)) is True
+    assert touched == ["built"], "lab mode must provision during the attach"
+
+    touched.clear()
+    monkeypatch.delenv("FLE_RESET_ON_CONNECT")
+    assert asyncio.run(prepare("safe").connect_to_server(0)) is True
+    assert touched == [], "world-safe mode must not build it during the attach"
+
+
+async def _async_noop(*args, **kwargs):
+    return True

@@ -49,15 +49,36 @@ class FactorioMCPState:
         # this module must not attach to any container — that import used to be
         # enough to reset the world the session would later be pointed at.
         self._gym_env = None
+        self._gym_env_target = None
         self.gym_env_id = self._resolve_gym_env_id()
 
     @property
     def gym_env(self):
-        """Observation environment for this session, created on first use."""
+        """Observation environment for this session, created on first use.
+
+        A cached environment is only reused for the target it was built for: a
+        session reused for another container (``FLE_SERVER`` changed between
+        sessions) must not keep observing the previous world.
+        """
+        target = (config.server_pin_name(), config.server_pin_rcon_port())
+        if self._gym_env is not None and self._gym_env_target != target:
+            self.close_gym_env()
         if self._gym_env is None:
             self._gym_env = self._make_gym_env(self.gym_env_id)
+            self._gym_env_target = target
             self._reset_gym_env()
         return self._gym_env
+
+    def close_gym_env(self):
+        """Drop the cached observation environment (its own RCON connection)."""
+        env, self._gym_env = self._gym_env, None
+        self._gym_env_target = None
+        if env is None:
+            return
+        try:
+            env.close()
+        except Exception as e:  # noqa: BLE001 - closing must not mask shutdown
+            _diag(f"Closing the observation environment failed: {e}")
 
     @staticmethod
     def _resolve_gym_env_id() -> str:
@@ -230,6 +251,12 @@ class FactorioMCPState:
 
             # Initial data fetch
             await self.refresh_game_data(instance_id)
+
+            # In lab mode the observation environment provisions the world, so
+            # build it now — during the attach, before any action can run. In
+            # world-safe mode it is built on first use and resets nothing.
+            if config.reset_on_connect():
+                self.gym_env
 
             # Initialize recipes (global)
             if not self.recipes:
