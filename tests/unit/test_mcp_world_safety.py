@@ -1403,3 +1403,42 @@ def test_the_attach_forwards_the_scanned_endpoint(monkeypatch):
 
     assert asyncio.run(state.connect_to_server(0)) is True
     assert seen == {"instance_id": 0, "address": "127.0.0.5", "tcp_port": 27300}
+
+
+def test_the_container_identity_matches_address_and_port(monkeypatch):
+    """Two containers publishing the same port on different hosts must not be
+    confused: the identity has to match the resolved endpoint exactly."""
+
+    built = []
+
+    class _FakeInstance:
+        def __init__(self, address, tcp_port, **kwargs):
+            built.append((address, tcp_port))
+            self.rcon_client = types.SimpleNamespace(send_command=lambda command: "1")
+            self.first_namespace = types.SimpleNamespace(
+                _create_agent_characters=lambda n: None
+            )
+
+        def set_speed(self, speed):
+            return None
+
+    monkeypatch.setattr(state_module, "FactorioInstance", _FakeInstance)
+    monkeypatch.setattr(
+        state_module,
+        "get_local_container_ips",
+        lambda: (["127.0.0.1", "127.0.0.2"], [35197, 35197], [27100, 27100]),
+    )
+
+    first = state_module.FactorioServer(
+        address="127.0.0.1", tcp_port=27100, instance_id=0, name="factorio_1"
+    )
+    second = state_module.FactorioServer(
+        address="127.0.0.2", tcp_port=27100, instance_id=1, name="factorio_2"
+    )
+    state = FactorioMCPState()
+    state.available_servers = {0: first, 1: second}
+
+    instance = state.create_factorio_instance(0)
+
+    assert built == [("127.0.0.1", 27100)]
+    assert instance.container_name == "factorio_1"

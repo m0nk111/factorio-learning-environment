@@ -231,10 +231,16 @@ class FactorioMCPState:
                 )
             address, tcp_port = ips[instance_id], tcp_ports[instance_id]
 
-        # The attachment carries the container identity: available_servers is
-        # keyed by enumeration index, so the port is what can be matched later.
+        # The attachment carries the container identity. available_servers is
+        # keyed by enumeration index, so the record is matched on the resolved
+        # endpoint — address *and* port, since two containers can publish the
+        # same port on different hosts.
         server = next(
-            (s for s in self.available_servers.values() if s.tcp_port == tcp_port),
+            (
+                s
+                for s in self.available_servers.values()
+                if s.tcp_port == tcp_port and s.address == address
+            ),
             None,
         )
 
