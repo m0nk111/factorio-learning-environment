@@ -807,3 +807,25 @@ def test_lab_mode_builds_the_observation_env_at_connect_time(monkeypatch):
 
 async def _async_noop(*args, **kwargs):
     return True
+
+
+def test_conflicting_explicit_target_fails_before_any_probe(monkeypatch):
+    """A contradictory FACTORIO_SERVER_* must not survive as far as a probe."""
+    monkeypatch.setenv("FLE_SERVER", "factorio_2")
+    monkeypatch.setenv("FACTORIO_SERVER_PORT", "27100")  # factorio_1
+    monkeypatch.setenv("FLE_RESET_ON_CONNECT", "1")
+    cluster, state = _install_fake_cluster(monkeypatch)
+
+    message = asyncio.run(session_module.initialize_session())
+
+    assert cluster.probes == [], "nothing may be probed after a target conflict"
+    assert cluster.connections == []
+    assert "Initialization failed" in message
+    assert "Conflicting Factorio target" in message
+
+    # A matching explicit target is not a conflict.
+    monkeypatch.setenv("FACTORIO_SERVER_PORT", "27101")
+    cluster, state = _install_fake_cluster(monkeypatch)
+    message = asyncio.run(session_module.initialize_session())
+    assert cluster.connections == [1]
+    assert "Connected to Factorio server factorio_2" in message

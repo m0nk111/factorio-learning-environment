@@ -47,15 +47,18 @@ async def initialize_session(ctx=None):
     log_info("Initializing Factorio session...")
 
     try:
-        # Scan for available servers
+        pin_name = config.server_pin_name()
+        pin_rcon_port = config.server_pin_rcon_port()
+
+        # Scan for available servers. A pinned target is resolved and validated
+        # before anything is probed (see State.scan_for_servers), so a
+        # contradictory FACTORIO_SERVER_* cannot provision a world first.
         servers = await state.scan_for_servers(ctx)
         log_info(f"Found {len(servers)} servers")
 
         if not servers:
             return "No Factorio servers found. Please ensure Factorio containers are running."
 
-        pin_name = config.server_pin_name()
-        pin_rcon_port = config.server_pin_rcon_port()
         pinned = pin_name is not None or pin_rcon_port is not None
 
         log_info("Server candidates:\n" + format_candidates(servers))

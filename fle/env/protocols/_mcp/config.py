@@ -27,6 +27,8 @@ for explicitly.
 import os
 from typing import Optional
 
+EXPLICIT_ADDRESS_ENV = "FACTORIO_SERVER_ADDRESS"
+EXPLICIT_PORT_ENV = "FACTORIO_SERVER_PORT"
 SERVER_PIN_ENV = "FLE_SERVER"
 RCON_PORT_PIN_ENV = "FLE_RCON_PORT"
 RESET_ON_CONNECT_ENV = "FLE_RESET_ON_CONNECT"
@@ -72,6 +74,33 @@ def server_pin_name() -> Optional[str]:
 def server_pin_rcon_port() -> Optional[int]:
     """Published host RCON port the session must attach to, or None."""
     return _env_port(RCON_PORT_PIN_ENV)
+
+
+def explicit_target_conflict(address: str, rcon_port: int) -> Optional[str]:
+    """Message when FACTORIO_SERVER_ADDRESS/PORT contradict a resolved target.
+
+    Those variables address one server directly; the pin addresses one by name or
+    port. When both are set and disagree, nothing may attach — least of all a
+    provisioning run that would reset the wrong world.
+    """
+    explicit_address = os.environ.get(EXPLICIT_ADDRESS_ENV)
+    explicit_port = os.environ.get(EXPLICIT_PORT_ENV)
+    port_conflict = False
+    if explicit_port not in (None, ""):
+        try:
+            port_conflict = int(explicit_port) != int(rcon_port)
+        except ValueError:
+            raise ValueError(
+                f"{EXPLICIT_PORT_ENV} must be an integer port number, "
+                f"got {explicit_port!r}"
+            )
+    if (explicit_address and explicit_address != address) or port_conflict:
+        return (
+            f"Conflicting Factorio target: {EXPLICIT_ADDRESS_ENV}={explicit_address!r} "
+            f"{EXPLICIT_PORT_ENV}={explicit_port!r} but the target pin resolves to "
+            f"{address}:{rcon_port}. Unset one of the two."
+        )
+    return None
 
 
 def reset_on_connect() -> bool:

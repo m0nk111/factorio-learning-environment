@@ -5,7 +5,11 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any
 
 from fle.env import FactorioInstance
-from fle.commons.cluster_ips import list_factorio_containers, select_container
+from fle.commons.cluster_ips import (
+    ContainerSelectionError,
+    list_factorio_containers,
+    select_container,
+)
 from fle.env.gym_env.registry import list_available_environments
 from fle.env.protocols._mcp import config
 
@@ -179,6 +183,12 @@ class FactorioMCPState:
                 name=config.server_pin_name(),
                 rcon_port=config.server_pin_rcon_port(),
             )
+            # Fail before probing (and, in lab mode, before provisioning): a
+            # contradictory FACTORIO_SERVER_ADDRESS/PORT means the target is
+            # ambiguous, so nothing may attach.
+            conflict = config.explicit_target_conflict(target.address, target.tcp_port)
+            if conflict:
+                raise ContainerSelectionError(conflict)
 
         scanned = 0
         new_servers = {}
