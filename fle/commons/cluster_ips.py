@@ -14,7 +14,7 @@ or fails loudly with the candidates listed.
 import json
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, is_dataclass, replace
 from typing import Iterable, List, Optional, Sequence
 
 # Container-internal ports published by the image; used to pick the right
@@ -32,6 +32,9 @@ class FactorioContainer:
     address: str
     tcp_port: int
     udp_port: Optional[int] = None
+    # Every published (host, port) for the RCON container port: a container can
+    # be published on several host ports, and a pin may name any of them.
+    rcon_bindings: tuple[tuple[str, int], ...] = ()
 
     def describe(self) -> str:
         game_port = self.udp_port if self.udp_port is not None else "none"
@@ -103,6 +106,24 @@ def _reachable_host(host_ip: str) -> str:
     return host_ip
 
 
+def _published_bindings(ports: dict, protocol: str, preferred: int) -> list:
+    """Every published ``(host_ip, host_port)`` for `protocol`/`preferred`."""
+    for container_port, bindings in (ports or {}).items():
+        if not container_port.endswith(f"/{protocol}") or not bindings:
+            continue
+        try:
+            internal = int(container_port.split("/")[0])
+        except ValueError:
+            continue
+        if internal != preferred:
+            continue
+        return [
+            (binding.get("HostIp") or "", int(binding["HostPort"]))
+            for binding in bindings
+        ]
+    return []
+
+
 def list_factorio_containers() -> List[FactorioContainer]:
     """List running containers whose name contains ``factorio_``.
 
@@ -127,7 +148,10 @@ def list_factorio_containers() -> List[FactorioContainer]:
         container_info = json.loads(inspect.stdout)[0]
         ports = container_info["NetworkSettings"]["Ports"]
         udp_port = _published_port(ports, "udp", INTERNAL_GAME_PORT)
-        rcon_host, tcp_port = _published_binding(ports, "tcp", INTERNAL_RCON_PORT)
+        bindings = _published_bindings(ports, "tcp", INTERNAL_RCON_PORT)
+        rcon_host, tcp_port = (
+            bindings[0] if bindings else _published_binding(ports, "tcp", INTERNAL_RCON_PORT)
+        )
         if tcp_port is None:
             # No RCON endpoint: nothing this process can talk to. A container
             # that publishes RCON but no game port is still usable (headless
@@ -144,6 +168,9 @@ def list_factorio_containers() -> List[FactorioContainer]:
                 # The published binding decides the address: two containers can
                 # publish the same port on different hosts.
                 address=_reachable_host(rcon_host or ""),
+                rcon_bindings=tuple(
+                    (_reachable_host(host or ""), port) for host, port in bindings
+                ),
                 tcp_port=tcp_port,
                 udp_port=udp_port,
             )
@@ -192,6 +219,16 @@ def format_candidates(containers: Iterable) -> str:
     return "\n".join(lines) if lines else "  (none)"
 
 
+def _bind_to_port(container, port: int):
+    """Return `container` re-addressed to the published binding for `port`."""
+    if int(getattr(container, "tcp_port", 0)) == port:
+        return container
+    for host, candidate_port in getattr(container, "rcon_bindings", ()):
+        if int(candidate_port) == port and is_dataclass(container):
+            return replace(container, address=host, tcp_port=port)
+    return container
+
+
 def select_container(
     candidates: Sequence,
     name: Optional[str] = None,
@@ -217,7 +254,17 @@ def select_container(
     if name is not None:
         matches = [c for c in matches if getattr(c, "name", None) == name]
     if rcon_port is not None:
-        matches = [c for c in matches if int(c.tcp_port) == int(rcon_port)]
+        def publishes(container) -> bool:
+            if int(getattr(container, "tcp_port", 0)) == int(rcon_port):
+                return True
+            return any(
+                int(port) == int(rcon_port)
+                for _, port in getattr(container, "rcon_bindings", ())
+            )
+
+        matches = [c for c in matches if publishes(c)]
+        if len(matches) == 1:
+            return _bind_to_port(matches[0], int(rcon_port))
 
     if len(matches) == 1:
         return matches[0]

@@ -1599,3 +1599,37 @@ def test_a_cached_environment_is_provisioned_by_a_later_opt_in(monkeypatch):
 
     state.gym_env  # and not provisioned again on every access
     assert resets == [True]
+
+
+def test_a_pin_can_name_a_secondary_rcon_binding(monkeypatch):
+    """A container published on two RCON host ports must be pinnable by either."""
+
+    payload = [
+        {
+            "Name": "/factorio_1",
+            "NetworkSettings": {
+                "Ports": {
+                    "27015/tcp": [
+                        {"HostIp": "127.0.0.1", "HostPort": "27100"},
+                        {"HostIp": "127.0.0.1", "HostPort": "27101"},
+                    ],
+                    "34197/udp": [{"HostIp": "127.0.0.1", "HostPort": "35197"}],
+                }
+            },
+        }
+    ]
+
+    def fake_run(cmd, capture_output, text):
+        if cmd[:3] == ["docker", "ps", "--filter"]:
+            return subprocess.CompletedProcess(cmd, 0, '"cid"\n', "")
+        return subprocess.CompletedProcess(cmd, 0, json.dumps(payload), "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    (container,) = list_factorio_containers()
+    assert container.tcp_port == 27100
+    assert container.rcon_bindings == (("127.0.0.1", 27100), ("127.0.0.1", 27101))
+
+    pinned = select_container([container], rcon_port=27101)
+    assert pinned.container_id == container.container_id
+    assert pinned.tcp_port == 27101
