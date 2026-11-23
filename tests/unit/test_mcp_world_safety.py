@@ -33,7 +33,6 @@ import pytest
 state_module = importlib.import_module("fle.env.protocols._mcp.state")
 
 from fle.commons.cluster_ips import (  # noqa: E402
-
     ContainerSelectionError,
     FactorioContainer,
     _published_port,
@@ -126,7 +125,8 @@ def _install_fake_cluster(monkeypatch, candidates=CANDIDATES, build=None):
     monkeypatch.setattr(
         FactorioMCPState,
         "_build_instance",
-        build or (lambda self, address, tcp_port: cluster.build_instance(address, tcp_port)),
+        build
+        or (lambda self, address, tcp_port: cluster.build_instance(address, tcp_port)),
     )
     monkeypatch.setattr(
         FactorioMCPState,
