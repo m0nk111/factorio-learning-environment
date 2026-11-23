@@ -7,6 +7,7 @@ from typing import Dict, List, Optional, Any
 from fle.env import FactorioInstance
 from fle.commons.cluster_ips import (
     ContainerSelectionError,
+    get_local_container_ips,
     list_factorio_containers,
     select_container,
 )
@@ -205,18 +206,40 @@ class FactorioMCPState:
         instance.set_speed(10)
         return instance
 
-    def create_factorio_instance(self, instance_id: int) -> FactorioInstance:
-        """Create a single Factorio instance for a server found by scan_for_servers"""
-        server = self.available_servers.get(instance_id)
-        if server is None:
-            raise IndexError(
-                f"instance_id {instance_id} is not among the servers found by "
-                f"scan_for_servers ({sorted(self.available_servers)})"
-            )
-        instance = self._build_instance(server.address, server.tcp_port)
+    def create_factorio_instance(
+        self,
+        instance_id: int,
+        address: Optional[str] = None,
+        tcp_port: Optional[int] = None,
+    ) -> FactorioInstance:
+        """Create a single Factorio instance
+
+        The endpoint is looked up with a fresh container discovery unless an
+        explicit `address`/`tcp_port` is passed, so a caller that already
+        discovered the live endpoint (e.g. a reconnect) can reuse it.
+        """
+        if address is None or tcp_port is None:
+            ips, udp_ports, tcp_ports = get_local_container_ips()
+
+            if instance_id >= len(ips):
+                raise IndexError(
+                    f"instance_id {instance_id} out of range for ips list of length {len(ips)}"
+                )
+            if instance_id >= len(tcp_ports):
+                raise IndexError(
+                    f"instance_id {instance_id} out of range for tcp_ports list of length {len(tcp_ports)}"
+                )
+            address, tcp_port = ips[instance_id], tcp_ports[instance_id]
+
         # The attachment carries the container identity: available_servers is
-        # keyed by enumeration index, so the port alone cannot resolve it later.
-        instance.container_name = server.name
+        # keyed by enumeration index, so the port is what can be matched later.
+        server = next(
+            (s for s in self.available_servers.values() if s.tcp_port == tcp_port),
+            None,
+        )
+
+        instance = self._build_instance(address, tcp_port)
+        instance.container_name = getattr(server, "name", None)
         return instance
 
     async def scan_for_servers(self, ctx=None) -> List[FactorioServer]:
