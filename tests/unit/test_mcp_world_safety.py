@@ -1195,8 +1195,10 @@ def test_observations_are_built_for_the_attached_container(monkeypatch):
         is_active=True,
     )
     state = FactorioMCPState()
-    state.available_servers = {27200: record}
+    # Keyed by enumeration index, exactly like scan_for_servers.
+    state.available_servers = {1: record}
     state.active_server = attached
+    attached.container_name = "factorio_1"
 
     # The pin points elsewhere; the attachment wins.
     monkeypatch.setenv("FLE_SERVER", "factorio_2")
@@ -1209,3 +1211,83 @@ def test_observations_are_built_for_the_attached_container(monkeypatch):
     assert calls, "the environment should have been built"
     assert calls[0]["container_name"] == "factorio_1"
     assert calls[0]["rcon_port"] == 27200
+
+
+def test_a_rolled_back_reattach_does_not_provision_the_previous_world(monkeypatch):
+    """Rebuilding observations after a failed attach elsewhere must not reset the
+    world the session fell back to."""
+
+    calls = []
+
+    class _FakeEnv:
+        def reset(self, *args, **kwargs):
+            return None
+
+        def close(self):
+            return None
+
+    fake_gym = types.SimpleNamespace(
+        make=lambda env_id, **kwargs: calls.append(kwargs) or _FakeEnv()
+    )
+    monkeypatch.setattr(state_module, "gym", fake_gym)
+    monkeypatch.setattr(
+        state_module.FactorioMCPState, "_make_gym_env", REAL_MAKE_GYM_ENV
+    )
+
+    attached = _RecordingInstance(name="factorio_1")
+    attached.address = "127.0.0.1"
+    attached.tcp_port = 27200
+    attached.container_name = "factorio_1"
+
+    other = _RecordingInstance(name="factorio_2")
+    other.address = "127.0.0.1"
+    other.tcp_port = 27300
+    other.container_name = "factorio_2"
+
+    records = {
+        1: state_module.FactorioServer(
+            address="127.0.0.1",
+            tcp_port=27200,
+            instance_id=1,
+            name="factorio_1",
+            is_active=True,
+        ),
+        2: state_module.FactorioServer(
+            address="127.0.0.1",
+            tcp_port=27300,
+            instance_id=2,
+            name="factorio_2",
+            is_active=True,
+        ),
+    }
+    state = FactorioMCPState()
+    state.available_servers = records
+    state.active_server = attached
+
+    # An environment provisioned for the attached world already exists.
+    state.gym_env
+
+    # Lab mode: attaching elsewhere provisions that world, then fails.
+    monkeypatch.setenv("FLE_RESET_ON_CONNECT", "1")
+    monkeypatch.setattr(state, "create_factorio_instance", lambda instance_id: other)
+    monkeypatch.setattr(
+        state,
+        "load_recipes_from_file",
+        lambda: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+    monkeypatch.setattr(state, "refresh_game_data", lambda instance_id: _noop())
+
+    assert asyncio.run(state.connect_to_server(2)) is False
+    assert state.active_server is attached
+
+    calls.clear()
+    rebuilt = state.gym_env
+
+    assert calls, "observations should be rebuilt for the restored attachment"
+    assert calls[0]["reset_on_init"] is False, "the rebuild must not provision again"
+    assert calls[0]["container_name"] == "factorio_1"
+    assert rebuilt is not None
+
+
+async def _noop():
+    return None

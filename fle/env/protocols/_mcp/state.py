@@ -59,6 +59,10 @@ class FactorioMCPState:
         # enough to reset the world the session would later be pointed at.
         self._gym_env = None
         self._gym_env_target = None
+        # Provisioning is an attach-time decision: an environment rebuilt later
+        # (for instance after a failed re-attach rolled the session back) must
+        # not reset the world it observes.
+        self._provision_gym_env = False
         self.gym_env_id = self._resolve_gym_env_id()
 
     @property
@@ -96,9 +100,10 @@ class FactorioMCPState:
         """
         server = self.active_server
         if server is not None:
-            tcp_port = getattr(server, "tcp_port", None)
-            record = self.available_servers.get(tcp_port)
-            return (getattr(record, "name", None), tcp_port)
+            return (
+                getattr(server, "container_name", None),
+                getattr(server, "tcp_port", None),
+            )
         return (config.server_pin_name(), config.server_pin_rcon_port())
 
     def observation_target(self):
@@ -156,7 +161,7 @@ class FactorioMCPState:
             env_id,
             disable_env_checker=True,
             run_idx=0,
-            reset_on_init=config.reset_on_connect(),
+            reset_on_init=self._provision_gym_env,
             container_name=container_name,
             rcon_port=rcon_port,
         )
@@ -203,7 +208,11 @@ class FactorioMCPState:
                 f"instance_id {instance_id} is not among the servers found by "
                 f"scan_for_servers ({sorted(self.available_servers)})"
             )
-        return self._build_instance(server.address, server.tcp_port)
+        instance = self._build_instance(server.address, server.tcp_port)
+        # The attachment carries the container identity: available_servers is
+        # keyed by enumeration index, so the port alone cannot resolve it later.
+        instance.container_name = server.name
+        return instance
 
     async def scan_for_servers(self, ctx=None) -> List[FactorioServer]:
         """Scan for running Factorio servers.
@@ -317,7 +326,11 @@ class FactorioMCPState:
             # build it now — during the attach, before any action can run. In
             # world-safe mode it is built on first use and resets nothing.
             if config.reset_on_connect():
-                self.gym_env
+                self._provision_gym_env = True
+                try:
+                    self.gym_env
+                finally:
+                    self._provision_gym_env = False
 
             # Initialize recipes (global)
             if not self.recipes:
