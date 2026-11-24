@@ -31,19 +31,52 @@ local function generate_agent_color(index, total_agents)
     return hsv_to_rgb(hue, saturation, value)
 end
 
--- Create agent characters script
-FLE.actions.create_agent_characters = function(num_agents)
-    -- delete all character entities on the surface
-    for _, entity in pairs(game.surfaces[1].find_entities_filtered{type = "character"}) do
-        entity.destroy()
+-- Characters a human is playing. This script used to destroy every character on
+-- the surface, which on a world someone is playing means their character: they
+-- come back as a spectator and cannot act. Their character is theirs.
+local function characters_played_by_humans()
+    local keep = {}
+    for _, player in pairs(game.players) do
+        if player.character and player.character.valid then
+            keep[player.character] = true
+        end
     end
+    return keep
+end
 
-    -- Initialize agent characters table
-    for _, entity in pairs(game.surfaces[1].find_entities_filtered{type = "character"}) do
-        entity.destroy()
-    end
-    -- Destroy existing agent characters if they exist
-    if storage.agent_characters then
+local function human_is_playing()
+    return #game.connected_players > 0
+end
+
+-- Create agent characters script.
+--
+-- own_world says whether this session owns the world it is attached to. On a
+-- world that is not ours, nothing is destroyed: a character belongs to whoever
+-- plays it, and an offline player cannot be recognised from game.players, so
+-- there is no safe subset to delete. Adding a character is enough to work.
+FLE.actions.create_agent_characters = function(num_agents, own_world)
+    local own = own_world ~= false
+    local keep = characters_played_by_humans()
+
+    if own then
+        -- Destroy existing agent characters if they exist, and only those.
+        -- Anything not owned by a player is leftover scenery from a session
+        -- that never cleaned up.
+        if storage.agent_characters then
+            for _, char in pairs(storage.agent_characters) do
+                if char and char.valid then
+                    char.destroy()
+                end
+            end
+            storage.agent_characters = {}
+        end
+        for _, entity in pairs(game.surfaces[1].find_entities_filtered{type = "character"}) do
+            if entity.valid and not keep[entity] then
+                entity.destroy()
+            end
+        end
+    elseif storage.agent_characters then
+        -- Keep our own previous characters, but never touch anyone else's.
         for _, char in pairs(storage.agent_characters) do
             if char and char.valid then
                 char.destroy()
@@ -70,5 +103,9 @@ FLE.actions.create_agent_characters = function(num_agents)
 
     -- Set the first character as the main player
     player = storage.agent_characters[1]
-    player.surface.always_day=true
+    -- always_day is a world setting. On a world that is not ours it is their
+    -- day/night cycle, not ours to flatten.
+    if own and not human_is_playing() then
+        player.surface.always_day = true
+    end
 end

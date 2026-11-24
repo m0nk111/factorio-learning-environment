@@ -11,3 +11,10 @@ import pytest
 @pytest.fixture(autouse=True)
 def _reset_between_tests():
     yield
+
+
+@pytest.fixture(autouse=True)
+def _no_machine_local_settings(monkeypatch, tmp_path):
+    """Keep the suite hermetic: the developer's own ~/.config/fle/mcp.json must not
+    decide what these tests attach to."""
+    monkeypatch.setenv("FLE_LOCAL_SETTINGS", str(tmp_path / "absent-mcp.json"))

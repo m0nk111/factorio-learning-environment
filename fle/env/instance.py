@@ -43,7 +43,7 @@ class GameControl:
         self,
         rcon_client,
         render_message_tool,
-        reset_speed: float = 10,
+        reset_speed: Optional[float] = 10,
         reset_paused: bool = False,
     ):
         self.rcon_client = rcon_client
@@ -229,7 +229,10 @@ class FactorioInstance:
         self.game_control = GameControl(
             self.rcon_client, render_message_tool, reset_speed, reset_paused
         )
-        self.game_control.reset_to_defaults()
+        if reset_speed is not None:
+            self.game_control.reset_to_defaults()
+        # reset_speed=None means the caller attached to a world it does not own:
+        # leave that world's speed and pause state exactly as the player left them.
 
         self.lua_script_manager = LuaScriptManager(self.rcon_client, cache_scripts)
         self.script_dict = {

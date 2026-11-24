@@ -46,8 +46,10 @@ from fle.commons.cluster_ips import (  # noqa: E402
     select_container,
 )
 from fle.env.protocols._mcp import config  # noqa: E402
+from fle.env.protocols._mcp import config as config_module  # noqa: E402
 from fle.env.protocols._mcp import init as session_module  # noqa: E402
 from fle.env.protocols._mcp.state import FactorioMCPState  # noqa: E402
+from fle.env.protocols._mcp import version_control as version_control_module  # noqa: E402
 
 # Captured at import time: the autouse guard below replaces the class attribute,
 # so a test that needs the real builder has to keep a reference to it.
@@ -1703,3 +1705,179 @@ def test_a_failing_probe_cleanup_does_not_abort_the_scan(monkeypatch):
 
     assert len(servers) == 1
     assert servers[0].is_active is True, "the probe succeeded; cleanup must not undo it"
+
+
+def test_direct_endpoint_attaches_without_container_discovery(monkeypatch):
+    """A natively run server is addressable when host and port are both pinned.
+
+    Container discovery cannot find it, so a session that only knows docker
+    would report "no Factorio containers are running" for a world that is
+    perfectly reachable — and another toolset may already be playing it.
+    """
+    cluster, state = _install_fake_cluster(monkeypatch)
+    monkeypatch.setattr(
+        state_module,
+        "list_factorio_containers",
+        lambda: pytest.fail("a direct endpoint must not touch docker discovery"),
+    )
+    monkeypatch.setenv("FLE_RCON_HOST", "127.0.0.1")
+    monkeypatch.setenv("FLE_RCON_PORT", "34199")
+    monkeypatch.delenv("FLE_SERVER", raising=False)
+
+    message = asyncio.run(session_module.initialize_session())
+
+    assert cluster.probes == [("127.0.0.1", 34199)], cluster.probes
+    assert cluster.connections == [0], cluster.connections
+    server = state.available_servers[0]
+    assert (server.address, server.tcp_port) == ("127.0.0.1", 34199)
+    assert "34199" in message
+
+
+def test_a_host_without_a_port_still_uses_container_discovery(monkeypatch):
+    """Half an endpoint is not an endpoint: the port may still name a container."""
+    cluster, state = _install_fake_cluster(monkeypatch)
+    monkeypatch.setenv("FLE_RCON_HOST", "127.0.0.1")
+    monkeypatch.delenv("FLE_RCON_PORT", raising=False)
+
+    asyncio.run(session_module.initialize_session())
+
+    assert state.available_servers[0].name == "factorio_1"
+    assert config_module.direct_rcon_endpoint() is None
+
+
+def test_a_host_pin_and_a_name_pin_cannot_be_combined(monkeypatch):
+    cluster, state = _install_fake_cluster(monkeypatch)
+    monkeypatch.setenv("FLE_RCON_HOST", "127.0.0.1")
+    monkeypatch.setenv("FLE_RCON_PORT", "34199")
+    monkeypatch.setenv("FLE_SERVER", "factorio_1")
+
+    message = asyncio.run(session_module.initialize_session())
+
+    assert "Initialization failed" in message
+    assert "cannot name a container as well" in message
+    assert cluster.connections == [], "nothing may attach on a contradictory pin"
+
+
+def test_local_settings_name_the_endpoint_without_environment(monkeypatch, tmp_path):
+    """A machine names its endpoint once; sessions need no exported variables."""
+    settings = tmp_path / "mcp.json"
+    settings.write_text('{"rcon_host": "10.0.0.5", "rcon_port": 34199}')
+    monkeypatch.setenv("FLE_LOCAL_SETTINGS", str(settings))
+    monkeypatch.delenv("FLE_RCON_HOST", raising=False)
+    monkeypatch.delenv("FLE_RCON_PORT", raising=False)
+
+    assert config_module.direct_rcon_endpoint() == ("10.0.0.5", 34199)
+
+
+def test_the_environment_still_wins_over_the_settings_file(monkeypatch, tmp_path):
+    settings = tmp_path / "mcp.json"
+    settings.write_text('{"rcon_host": "10.0.0.5", "rcon_port": 34199}')
+    monkeypatch.setenv("FLE_LOCAL_SETTINGS", str(settings))
+    monkeypatch.setenv("FLE_RCON_HOST", "127.0.0.1")
+    monkeypatch.setenv("FLE_RCON_PORT", "27200")
+
+    assert config_module.direct_rcon_endpoint() == ("127.0.0.1", 27200)
+
+
+def test_a_malformed_settings_file_says_so(monkeypatch, tmp_path):
+    settings = tmp_path / "mcp.json"
+    settings.write_text("{not json")
+    monkeypatch.setenv("FLE_LOCAL_SETTINGS", str(settings))
+    monkeypatch.delenv("FLE_RCON_HOST", raising=False)
+    monkeypatch.delenv("FLE_RCON_PORT", raising=False)
+
+    with pytest.raises(ValueError, match="not valid JSON"):
+        config_module.direct_rcon_endpoint()
+
+
+def test_undo_and_restore_refuse_to_reset_a_foreign_world(monkeypatch):
+    """undo/restore call instance.reset(); on a world this session did not
+    provision that would wipe someone else's factory."""
+    monkeypatch.setenv("FLE_RCON_HOST", "127.0.0.1")
+    monkeypatch.setenv("FLE_RCON_PORT", "34199")
+
+    undo_refusal = version_control_module._foreign_world_refusal("undo")
+    restore_refusal = version_control_module._foreign_world_refusal("restore")
+
+    assert "does not own" in undo_refusal
+    assert "34199" in undo_refusal
+    assert "destroy" in restore_refusal
+    assert "Refusing to run restore" in restore_refusal
+
+
+def test_undo_is_allowed_on_a_world_this_session_owns(monkeypatch):
+    """A sandbox reached through container discovery stays fully undoable."""
+    monkeypatch.delenv("FLE_RCON_HOST", raising=False)
+    monkeypatch.delenv("FLE_RCON_PORT", raising=False)
+
+    assert version_control_module._foreign_world_refusal("undo") == ""
+
+
+class _FakeRcon:
+    def __init__(self, replies=None):
+        self.commands = []
+        self.replies = replies or {}
+
+    def send_command(self, command):
+        self.commands.append(command)
+        for needle, reply in self.replies.items():
+            if needle in command:
+                return reply
+        return ""
+
+
+class _FakeInstance:
+    def __init__(self, rcon):
+        self.rcon_client = rcon
+
+
+def test_handlers_are_released_only_on_a_world_we_do_not_own(monkeypatch):
+    rcon = _FakeRcon()
+    instance = _FakeInstance(rcon)
+
+    monkeypatch.delenv("FLE_RCON_HOST", raising=False)
+    monkeypatch.delenv("FLE_RCON_PORT", raising=False)
+    assert state_module.release_level_handlers(instance) is False
+    assert rcon.commands == [], "a sandbox we own may keep its handlers"
+
+    monkeypatch.setenv("FLE_RCON_HOST", "127.0.0.1")
+    monkeypatch.setenv("FLE_RCON_PORT", "34199")
+    assert state_module.release_level_handlers(instance) is True
+    sent = rcon.commands[-1]
+    assert "on_tick" in sent and "on_script_path_request_finished" in sent
+    assert "on_nth_tick(5, nil)" in sent and "on_nth_tick(15, nil)" in sent
+    assert sent.startswith("/sc ")
+
+
+def test_reconnect_discovers_a_pinned_endpoint_without_docker(monkeypatch):
+    """A pinned endpoint is the whole answer; docker must not be consulted.
+
+    Observed against the live campaign: the server was up and answering RCON,
+    and `reconnect` still answered "no running Factorio container found",
+    because discovery only ever listed containers.
+    """
+    tools_module = importlib.import_module("fle.env.protocols._mcp.tools")
+    monkeypatch.setenv("FLE_RCON_HOST", "127.0.0.1")
+    monkeypatch.setenv("FLE_RCON_PORT", "34199")
+    monkeypatch.delenv("FLE_SERVER", raising=False)
+
+    def explode():
+        raise AssertionError("docker must not be consulted when the target is pinned")
+
+    monkeypatch.setattr(tools_module, "get_local_container_ips", explode)
+    servers = tools_module.discover_servers()
+
+    assert len(servers) == 1
+    server = next(iter(servers.values()))
+    assert (server.address, server.tcp_port) == ("127.0.0.1", 34199)
+
+
+def test_pinned_endpoint_conflicts_with_a_container_name(monkeypatch):
+    """Addressing an endpoint and naming a container at once is a contradiction."""
+    tools_module = importlib.import_module("fle.env.protocols._mcp.tools")
+    monkeypatch.setenv("FLE_RCON_HOST", "127.0.0.1")
+    monkeypatch.setenv("FLE_RCON_PORT", "34199")
+    monkeypatch.setenv("FLE_SERVER", "factorio_1")
+
+    with pytest.raises(ValueError, match="Conflicting Factorio target"):
+        tools_module.discover_servers()
