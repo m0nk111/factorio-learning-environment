@@ -30,7 +30,31 @@ def is_lost_rcon_connection(instance, error: BaseException) -> bool:
 
 
 def discover_servers() -> Dict[int, FactorioServer]:
-    """Rebuild the server table from the Factorio containers running right now."""
+    """Rebuild the server table from the Factorio containers running right now.
+
+    A pinned direct endpoint is not a container: the server it names belongs to
+    another process (a campaign, say), so the docker listing can never find it.
+    Without this branch `reconnect` answered "no running Factorio container
+    found" while the pinned server was running and answering on its RCON port.
+    """
+    direct = config.direct_rcon_endpoint()
+    if direct is not None:
+        host, port = direct
+        if config.server_pin_name() is not None:
+            raise ValueError(
+                f"Conflicting Factorio target: {config.RCON_HOST_PIN_ENV}={host!r} "
+                f"attaches to an endpoint directly, so {config.SERVER_PIN_ENV}="
+                f"{config.server_pin_name()!r} cannot name a container as well"
+            )
+        return {
+            0: FactorioServer(
+                address=host,
+                tcp_port=port,
+                instance_id=0,
+                name=f"{host}:{port}",
+                last_checked=time.time(),
+            )
+        }
     ips, _udp_ports, tcp_ports = get_local_container_ips()
     return {
         server_id: FactorioServer(

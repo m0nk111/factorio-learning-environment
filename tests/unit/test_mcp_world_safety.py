@@ -1847,3 +1847,37 @@ def test_handlers_are_released_only_on_a_world_we_do_not_own(monkeypatch):
     assert "on_tick" in sent and "on_script_path_request_finished" in sent
     assert "on_nth_tick(5, nil)" in sent and "on_nth_tick(15, nil)" in sent
     assert sent.startswith("/sc ")
+
+
+def test_reconnect_discovers_a_pinned_endpoint_without_docker(monkeypatch):
+    """A pinned endpoint is the whole answer; docker must not be consulted.
+
+    Observed against the live campaign: the server was up and answering RCON,
+    and `reconnect` still answered "no running Factorio container found",
+    because discovery only ever listed containers.
+    """
+    tools_module = importlib.import_module("fle.env.protocols._mcp.tools")
+    monkeypatch.setenv("FLE_RCON_HOST", "127.0.0.1")
+    monkeypatch.setenv("FLE_RCON_PORT", "34199")
+    monkeypatch.delenv("FLE_SERVER", raising=False)
+
+    def explode():
+        raise AssertionError("docker must not be consulted when the target is pinned")
+
+    monkeypatch.setattr(tools_module, "get_local_container_ips", explode)
+    servers = tools_module.discover_servers()
+
+    assert len(servers) == 1
+    server = next(iter(servers.values()))
+    assert (server.address, server.tcp_port) == ("127.0.0.1", 34199)
+
+
+def test_pinned_endpoint_conflicts_with_a_container_name(monkeypatch):
+    """Addressing an endpoint and naming a container at once is a contradiction."""
+    tools_module = importlib.import_module("fle.env.protocols._mcp.tools")
+    monkeypatch.setenv("FLE_RCON_HOST", "127.0.0.1")
+    monkeypatch.setenv("FLE_RCON_PORT", "34199")
+    monkeypatch.setenv("FLE_SERVER", "factorio_1")
+
+    with pytest.raises(ValueError, match="Conflicting Factorio target"):
+        tools_module.discover_servers()
