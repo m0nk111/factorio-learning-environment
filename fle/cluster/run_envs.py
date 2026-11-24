@@ -29,11 +29,17 @@ def _env_int(name: str, default: int) -> int:
 # the Factorio defaults; only the published mapping moves.
 START_RCON_PORT = _env_int("FLE_RCON_PORT_BASE", 27100)
 START_GAME_PORT = _env_int("FLE_GAME_PORT_BASE", 35197)
+
+
 def _resolve_rcon_password() -> str:
     """Env first, then the machine-local settings file, then the historical default."""
     from fle.commons import local_settings
 
-    return os.environ.get("FLE_RCON_PASSWORD") or local_settings.rcon_password() or "factorio"
+    return (
+        os.environ.get("FLE_RCON_PASSWORD")
+        or local_settings.rcon_password()
+        or "factorio"
+    )
 
 
 RCON_PASSWORD = _resolve_rcon_password()
